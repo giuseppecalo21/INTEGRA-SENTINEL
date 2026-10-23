@@ -190,7 +190,7 @@
 .sn-config .is-panel.sn-wpscan{background:#fff;border:1px solid #e6edf1;padding:14px 16px;border-radius:5px;margin:14px 0}
 .sn-deps-settings textarea{width:100%}
 .sn-products td small code{font-size:11px}
-.sn-note-form{display:flex;gap:6px;align-items:center;margin:0}.sn-note-form input[type=text]{flex:1;min-width:200px}
+.sn-note-input{width:100%;min-width:220px}.sn-history-save{margin:8px 0;text-align:right}
 .sn-history td:first-child{white-space:nowrap}
 .sn-cnote{border-top:1px solid #edf1f5;padding:10px 0}.sn-cnote:first-of-type{border-top:0}.sn-cnote-head{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:4px}.sn-cnote .sn-hint{margin:2px 0 6px}
 .sn-report-steps{display:grid;gap:16px}.sn-report-steps h3 small{font-weight:400}

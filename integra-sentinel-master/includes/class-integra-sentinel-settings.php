@@ -40,7 +40,7 @@ final class Integra_Sentinel_Settings {
             'webhooks' => array('slack' => '', 'generic' => '', 'telegram_token' => '', 'telegram_chat' => '',
                 'events' => array('integrity', 'cve', 'down', 'license', 'emergency', 'drafts')),
             'scan' => array('batch' => 6),
-            'ai' => array('provider' => 'gemini', 'model' => '', 'base_url' => '', 'key' => '', 'register' => 'voi', 'style' => '', 'auto_drafts' => 1),
+            'ai' => array('provider' => 'gemini', 'model' => '', 'base_url' => '', 'key' => '', 'register' => 'voi', 'style' => '', 'auto_drafts' => 1, 'fallback' => ''),
         );
     }
 

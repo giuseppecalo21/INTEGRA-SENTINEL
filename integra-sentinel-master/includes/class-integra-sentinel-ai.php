@@ -54,6 +54,8 @@ final class Integra_Sentinel_AI {
         $cfg['register'] = in_array($input['register'] ?? '', array('lei', 'voi', 'tu'), true) ? $input['register'] : 'voi';
         $cfg['style'] = substr(sanitize_textarea_field((string) ($input['style'] ?? '')), 0, 1000);
         $cfg['auto_drafts'] = !empty($input['auto_drafts']) ? 1 : 0;
+        $fallback = trim((string) ($input['fallback'] ?? ''));
+        $cfg['fallback'] = preg_match('/^[A-Za-z0-9._:\/@-]{0,120}$/', $fallback) ? $fallback : '';
         $key = trim((string) ($input['key'] ?? ''));
         if ($key === '-') { $cfg['key'] = ''; }
         elseif ($key !== '') {
@@ -65,49 +67,96 @@ final class Integra_Sentinel_AI {
         return Integra_Sentinel_Settings::save('ai', $cfg);
     }
 
+    /** Codici che indicano un sovraccarico o un limite temporaneo: vale la pena riprovare. */
+    public static function retryable($code) {
+        return in_array((int) $code, array(0, 408, 429, 500, 502, 503, 504, 529), true);
+    }
+
     /**
-     * Chiamata al modello. Ritorna ok, text, error, model.
-     * @param string $system istruzioni
-     * @param string $user   richiesta con i dati
+     * Modelli di riserva quando il principale e' sovraccarico: quello indicato nelle impostazioni oppure, per Gemini,
+     * altri modelli Flash che Google elenca per questa chiave (verifica del collegamento).
+     */
+    public static function fallback_models($c) {
+        $out = array();
+        $cfg = Integra_Sentinel_Settings::get('ai');
+        if (!empty($cfg['fallback'])) { $out[] = (string) $cfg['fallback']; }
+        if ($c['provider'] === 'gemini' && !$out) {
+            $listed = (array) (self::status()['models'] ?? array());
+            usort($listed, function($a, $b) { return (int) (strpos($b, 'lite') !== false) <=> (int) (strpos($a, 'lite') !== false); });
+            foreach ($listed as $name) {
+                if (preg_match('/image|tts|audio|live|exp|preview|thinking|embedding/i', $name)) { continue; }
+                $out[] = $name;
+            }
+        }
+        return array_slice(array_values(array_diff(array_unique($out), array($c['model']))), 0, 2);
+    }
+
+    /**
+     * Chiamata al modello con nuovi tentativi in caso di sovraccarico e, se serve, un modello di riserva.
+     * Ritorna ok, text, error, model, retryable (true se l'errore e' temporaneo).
      */
     public static function generate($system, $user, $max_tokens = 2500) {
         $c = self::config();
-        if (!self::configured()) { return array('ok' => false, 'text' => '', 'error' => 'Intelligenza artificiale non configurata: aggiungi la chiave in Impostazioni.', 'model' => ''); }
-        if (function_exists('set_time_limit')) { @set_time_limit(150); }
-        $args = array('timeout' => 120, 'redirection' => 0, 'limit_response_size' => 1048576, 'headers' => array('Content-Type' => 'application/json'));
+        if (!self::configured()) { return array('ok' => false, 'text' => '', 'error' => 'Intelligenza artificiale non configurata: aggiungi la chiave in Impostazioni.', 'model' => '', 'retryable' => false); }
+        if (function_exists('set_time_limit')) { @set_time_limit(300); }
+        $start = time();
+        $plan = array(array($c['model'], array(0, 4, 10)));
+        foreach (self::fallback_models($c) as $model) { $plan[] = array($model, array(0, 4)); }
+        $last = null; $tried = array();
+        foreach ($plan as $step) {
+            list($model, $waits) = $step;
+            foreach ($waits as $wait) {
+                if (time() - $start + $wait > 220) { break 2; }
+                if ($wait) { sleep($wait); }
+                $last = self::call_once($c, $model, $system, $user, $max_tokens);
+                if ($last['ok']) { return $last; }
+                if (!self::retryable($last['code'])) { return $last; }
+                $tried[$model] = true;
+            }
+        }
+        $models = array_keys($tried);
+        $last['error'] = 'Il servizio dell’IA è sovraccarico in questo momento: ho riprovato più volte' . (count($models) > 1 ? ' anche con ' . implode(', ', array_slice($models, 1)) : '')
+            . ' senza successo. Di solito passa in pochi minuti: riprova più tardi. (Dettaglio: ' . $last['error'] . ')';
+        $last['retryable'] = true;
+        return $last;
+    }
+
+    /** Una sola richiesta al fornitore. Ritorna ok, text, error, model, code, retryable. */
+    private static function call_once($c, $model, $system, $user, $max_tokens) {
+        $args = array('timeout' => 90, 'redirection' => 0, 'limit_response_size' => 1048576, 'headers' => array('Content-Type' => 'application/json'));
         if ($c['provider'] === 'gemini') {
-            $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($c['model']) . ':generateContent';
+            $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($model) . ':generateContent';
             $args['headers']['x-goog-api-key'] = $c['key'];
             $args['body'] = wp_json_encode(array(
                 'systemInstruction' => array('parts' => array(array('text' => $system))),
                 'contents' => array(array('role' => 'user', 'parts' => array(array('text' => $user)))),
-                'generationConfig' => array('temperature' => 0.3, 'maxOutputTokens' => $max_tokens),
+                // I modelli Gemini recenti "ragionano" e quel ragionamento consuma parte del limite: margine ampio per non troncare la bozza.
+                'generationConfig' => array('temperature' => 0.3, 'maxOutputTokens' => max(1024, $max_tokens * 3)),
             ));
         } elseif ($c['provider'] === 'anthropic') {
             $url = 'https://api.anthropic.com/v1/messages';
             $args['headers']['x-api-key'] = $c['key'];
             $args['headers']['anthropic-version'] = '2023-06-01';
-            $args['body'] = wp_json_encode(array('model' => $c['model'], 'max_tokens' => $max_tokens, 'temperature' => 0.3, 'system' => $system,
+            $args['body'] = wp_json_encode(array('model' => $model, 'max_tokens' => $max_tokens, 'temperature' => 0.3, 'system' => $system,
                 'messages' => array(array('role' => 'user', 'content' => $user))));
         } else {
             $url = $c['base_url'] . '/chat/completions';
             $args['headers']['Authorization'] = 'Bearer ' . $c['key'];
-            $args['body'] = wp_json_encode(array('model' => $c['model'], 'max_tokens' => $max_tokens, 'temperature' => 0.3,
+            $args['body'] = wp_json_encode(array('model' => $model, 'max_tokens' => $max_tokens, 'temperature' => 0.3,
                 'messages' => array(array('role' => 'system', 'content' => $system), array('role' => 'user', 'content' => $user))));
         }
+        $fail = function($code, $error) use ($model) { return array('ok' => false, 'text' => '', 'error' => $error, 'model' => $model, 'code' => (int) $code, 'retryable' => self::retryable($code)); };
         $response = wp_safe_remote_post($url, $args);
-        if (is_wp_error($response)) { return array('ok' => false, 'text' => '', 'error' => 'Connessione non riuscita: ' . $response->get_error_message(), 'model' => $c['model']); }
+        if (is_wp_error($response)) { return $fail(0, 'Connessione non riuscita: ' . $response->get_error_message()); }
         $code = (int) wp_remote_retrieve_response_code($response);
         $json = json_decode((string) wp_remote_retrieve_body($response), true);
-        if ($code < 200 || $code >= 300 || !is_array($json)) {
-            return array('ok' => false, 'text' => '', 'error' => self::error_text($code, $json), 'model' => $c['model']);
-        }
+        if ($code < 200 || $code >= 300 || !is_array($json)) { return $fail($code ?: 502, self::error_text($code, $json)); }
         $text = '';
         if ($c['provider'] === 'gemini') {
             foreach ((array) ($json['candidates'][0]['content']['parts'] ?? array()) as $part) {
                 if (is_array($part) && empty($part['thought'])) { $text .= (string) ($part['text'] ?? ''); }
             }
-            if ($text === '' && !empty($json['promptFeedback']['blockReason'])) { return array('ok' => false, 'text' => '', 'error' => 'Richiesta bloccata dai filtri di Gemini: ' . sanitize_text_field((string) $json['promptFeedback']['blockReason']), 'model' => $c['model']); }
+            if ($text === '' && !empty($json['promptFeedback']['blockReason'])) { return $fail(400, 'Richiesta bloccata dai filtri di Gemini: ' . sanitize_text_field((string) $json['promptFeedback']['blockReason'])); }
         } elseif ($c['provider'] === 'anthropic') {
             foreach ((array) ($json['content'] ?? array()) as $block) {
                 if (is_array($block) && ($block['type'] ?? '') === 'text') { $text .= (string) $block['text']; }
@@ -116,8 +165,8 @@ final class Integra_Sentinel_AI {
             $text = (string) ($json['choices'][0]['message']['content'] ?? '');
         }
         $text = trim($text);
-        if ($text === '') { return array('ok' => false, 'text' => '', 'error' => 'Il modello ha risposto senza testo: riprova o cambia modello.', 'model' => $c['model']); }
-        return array('ok' => true, 'text' => $text, 'error' => '', 'model' => $c['model']);
+        if ($text === '') { return $fail(400, 'Il modello ha risposto senza testo: riprova o cambia modello.'); }
+        return array('ok' => true, 'text' => $text, 'error' => '', 'model' => $model, 'code' => $code, 'retryable' => false);
     }
 
     private static function error_text($code, $json) {
@@ -126,7 +175,8 @@ final class Integra_Sentinel_AI {
             $detail = (string) ($json['error']['message'] ?? ($json['error']['type'] ?? ($json['message'] ?? '')));
         }
         $hint = array(400 => 'richiesta non valida (controlla il nome del modello)', 401 => 'chiave API non valida', 403 => 'chiave API senza permessi o servizio non abilitato',
-            404 => 'modello non trovato', 429 => 'limite di richieste raggiunto: riprova tra qualche minuto', 529 => 'servizio sovraccarico: riprova tra poco')[$code] ?? '';
+            404 => 'modello non trovato', 429 => 'limite di richieste raggiunto: riprova tra qualche minuto', 500 => 'errore interno del fornitore', 502 => 'servizio momentaneamente non disponibile',
+            503 => 'modello sovraccarico in questo momento', 504 => 'il fornitore non ha risposto in tempo', 529 => 'servizio sovraccarico')[$code] ?? '';
         $out = 'Errore del fornitore (HTTP ' . (int) $code . ($hint !== '' ? ', ' . $hint : '') . ')';
         return $out . ($detail !== '' ? ': ' . substr(sanitize_text_field($detail), 0, 300) : '.');
     }
