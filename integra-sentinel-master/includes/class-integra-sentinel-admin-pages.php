@@ -236,29 +236,98 @@ final class Integra_Sentinel_Admin_Pages {
     public static function reports() {
         $sites = Integra_Sentinel_Master::sites();
         $period = Integra_Sentinel_Reports::month_bounds(isset($_GET['ym']) ? sanitize_text_field(wp_unslash($_GET['ym'])) : '');
-        $manage = Integra_Sentinel_Settings::can_manage();
+        $site_id = isset($_GET['site']) ? sanitize_text_field(wp_unslash($_GET['site'])) : '';
+        if ($site_id !== '' && isset($sites[$site_id])) { self::report_editor($sites[$site_id], $period); return; }
+        $drafts = Integra_Sentinel_Store::drafts_for_month($period['ym']);
+        $statuses = Integra_Sentinel_Store::draft_statuses();
         Integra_Sentinel_Admin::open('integra-sentinel-reports');
-        echo '<section class="sn-page-heading"><div><p class="sn-kicker">REPORT CLIENTI</p><h2>Documenti con il marchio dell’agenzia</h2><p>Report mensile di manutenzione (aggiornamenti, disponibilità, sicurezza, prossimi passi) e audit di presa in carico per i siti ereditati. Si aprono in una pagina stampabile: Stampa → Salva come PDF.</p></div></section>';
-        echo '<form method="get" class="sn-month-form"><input type="hidden" name="page" value="integra-sentinel-reports"><label>Mese del report <input type="month" name="ym" value="' . esc_attr($period['ym']) . '"></label> <button class="button" type="submit">Mostra</button></form>';
-        echo '<section class="sn-section"><div class="sn-table-wrap"><table class="sn-simple-table"><thead><tr><th>Sito</th><th>Contatto</th><th>Report di ' . self::e($period['label']) . '</th><th>Audit</th></tr></thead><tbody>';
-        if (!$sites) { echo '<tr><td colspan="4" class="sn-muted">Nessun sito registrato.</td></tr>'; }
+        echo '<section class="sn-page-heading"><div><p class="sn-kicker">REPORT CLIENTI</p><h2>Cosa abbiamo fatto, spiegato ai clienti</h2><p>Per ogni sito prepari il resoconto del mese: l’IA scrive una bozza comprensibile partendo dai dati raccolti, tu la rileggi, la approvi e la invii insieme al report con i numeri.</p></div></section>';
+        if (!Integra_Sentinel_AI::configured()) {
+            echo '<div class="notice notice-info inline"><p>Per far scrivere le bozze all’IA aggiungi una chiave API in <a href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-settings') . '#sn-ai') . '">Impostazioni → Intelligenza artificiale</a> (Google Gemini ha un piano gratuito). Nel frattempo puoi scrivere i resoconti a mano.</p></div>';
+        }
+        echo '<form method="get" class="sn-month-form"><input type="hidden" name="page" value="integra-sentinel-reports"><label>Mese <input type="month" name="ym" value="' . esc_attr($period['ym']) . '"></label> <button class="button" type="submit">Mostra</button></form>';
+        echo '<section class="sn-section"><div class="sn-table-wrap"><table class="sn-simple-table"><thead><tr><th>Sito</th><th>Resoconto di ' . self::e($period['label']) . '</th><th>Documenti</th></tr></thead><tbody>';
+        if (!$sites) { echo '<tr><td colspan="3" class="sn-muted">Nessun sito registrato.</td></tr>'; }
         foreach ($sites as $id => $site) {
             $meta = (array) ($site['meta'] ?? array());
-            echo '<tr><td><a href="' . esc_url(Integra_Sentinel_Master::sn_admin_url($id)) . '"><strong>' . self::e($site['label']) . '</strong></a><br><small>' . self::e($site['url']) . '</small></td>';
-            echo '<td>' . self::e(trim(($meta['contact_name'] ?? '') . ' ' . ($meta['contact_email'] ?? '')) ?: '—') . '</td><td class="sn-row-actions">';
-            echo '<a class="button button-small" target="_blank" rel="noopener" href="' . esc_url(Integra_Sentinel_Admin::document_url('monthly', $id, $period['ym'])) . '">Apri il report ↗</a>';
-            if ($manage && !empty($meta['contact_email'])) {
-                Integra_Sentinel_Admin::form_start('report_send', 'integra-sentinel-reports', array('site_id' => $id, 'ym' => $period['ym'], 'to' => $meta['contact_email']));
-                echo '<button class="button button-small" type="submit" onclick="return confirm(' . esc_attr(wp_json_encode('Inviare il report di ' . $period['label'] . ' a ' . $meta['contact_email'] . '?')) . ')">Invia al cliente</button></form>';
+            $d = $drafts[$id] ?? null;
+            $editor = Integra_Sentinel_Admin::url('integra-sentinel-reports', array('site' => $id, 'ym' => $period['ym']));
+            echo '<tr><td><strong>' . self::e($site['label']) . '</strong><br><small>' . self::e(trim(($meta['contact_name'] ?? '') . ' ' . ($meta['contact_email'] ?? '')) ?: 'Nessun contatto: impostalo nella scheda cliente') . '</small></td><td class="sn-row-actions">';
+            if ($d && trim((string) $d['body']) !== '') {
+                $tone = array('draft' => 'warn', 'approved' => 'brand', 'sent' => 'ok')[$d['status']] ?? 'muted';
+                echo self::badge($statuses[$d['status']] ?? $d['status'], $tone) . ' <small>' . self::e($d['status'] === 'sent' ? 'il ' . wp_date('d/m/Y', (int) $d['sent_at']) : 'aggiornato il ' . wp_date('d/m/Y', (int) $d['updated_at'])) . '</small> ';
+                echo '<a class="button button-small" href="' . esc_url($editor) . '">Apri</a>';
+            } else {
+                echo '<a class="button button-small button-primary" href="' . esc_url($editor) . '">Prepara il resoconto</a>';
             }
-            if ($manage) {
-                $me = wp_get_current_user();
-                Integra_Sentinel_Admin::form_start('report_send', 'integra-sentinel-reports', array('site_id' => $id, 'ym' => $period['ym'], 'to' => (string) $me->user_email));
-                echo '<button class="button button-small" type="submit">Invia a me</button></form>';
-            }
-            echo '</td><td><a class="button button-small" target="_blank" rel="noopener" href="' . esc_url(Integra_Sentinel_Admin::document_url('onboarding', $id)) . '">Audit di presa in carico ↗</a></td></tr>';
+            echo '</td><td class="sn-row-actions"><a class="button button-small" target="_blank" rel="noopener" href="' . esc_url(Integra_Sentinel_Admin::document_url('monthly', $id, $period['ym'])) . '">Report del mese ↗</a> <a class="button button-small" target="_blank" rel="noopener" href="' . esc_url(Integra_Sentinel_Admin::document_url('onboarding', $id)) . '">Audit di presa in carico ↗</a></td></tr>';
         }
         echo '</tbody></table></div><p class="sn-hint">Il contatto del cliente si imposta nella scheda cliente di ogni sito. L’invio usa wp_mail del Master: serve un SMTP configurato.</p></section>';
+        Integra_Sentinel_Admin::close();
+    }
+
+    /** Resoconto di un sito: note per l'IA, bozza da rileggere e approvare, anteprima e invio. */
+    private static function report_editor($site, $period) {
+        $id = (string) $site['id'];
+        $meta = (array) ($site['meta'] ?? array());
+        $manage = Integra_Sentinel_Settings::can_manage();
+        $draft = Integra_Sentinel_Store::draft_get($id, $period['ym']);
+        $body = (string) ($draft['body'] ?? '');
+        $status = (string) ($draft['status'] ?? '');
+        $back = Integra_Sentinel_Admin::url('integra-sentinel-reports', array('ym' => $period['ym']));
+        Integra_Sentinel_Admin::open('integra-sentinel-reports', '<a class="button" href="' . esc_url($back) . '">← Tutti i siti</a>');
+        echo '<section class="sn-page-heading"><div><p class="sn-kicker">RESOCONTO PER IL CLIENTE · ' . self::e(strtoupper($period['label'])) . '</p><h2>' . self::e($site['label']) . '</h2><p>L’IA usa solo i dati raccolti da Sentinel e le tue note: non deve inventare motivazioni. Rileggi sempre la bozza prima di approvarla.</p></div>';
+        if ($status !== '') {
+            $tone = array('draft' => 'warn', 'approved' => 'brand', 'sent' => 'ok')[$status] ?? 'muted';
+            echo '<div>' . self::badge(Integra_Sentinel_Store::draft_statuses()[$status] ?? $status, $tone) . '</div>';
+        }
+        echo '</section>';
+        $error = get_transient('integra_sentinel_ai_error_' . get_current_user_id());
+        if ($error) { delete_transient('integra_sentinel_ai_error_' . get_current_user_id()); echo '<div class="notice notice-error inline"><p>' . self::e($error) . '</p></div>'; }
+        if (empty($site['report'])) { echo '<div class="notice notice-warning inline"><p>Il sito non ha ancora inviato un inventario: il resoconto avrebbe pochi dati.</p></div>'; }
+
+        $ai = Integra_Sentinel_AI::configured();
+        echo '<div class="sn-report-steps">';
+        echo '<section class="sn-panel"><h3>1 · Note per questo mese <small class="sn-muted">(facoltative)</small></h3><p class="sn-hint">Scrivi qui ciò che i dati non sanno: perché hai lasciato un aggiornamento in sospeso, cosa hai verificato, accordi presi con il cliente. L’IA le userà come fonte affidabile.</p>';
+        if ($manage) {
+            Integra_Sentinel_Admin::form_start('report_ai', 'integra-sentinel-reports', array('site_id' => $id, 'ym' => $period['ym'], '_sn_site' => $id, '_sn_ym' => $period['ym']), 'sn-ai-form');
+            echo '<textarea name="notes" rows="5" class="large-text" placeholder="Es.: Elementor Pro resta alla versione attuale perché la licenza è scaduta: aspettiamo la decisione del cliente sul rinnovo. Dopo l’aggiornamento di WooCommerce abbiamo fatto un ordine di prova.">' . esc_textarea((string) ($draft['notes'] ?? '')) . '</textarea>';
+            if ($ai) {
+                $confirm = $body !== '' ? ' onclick="return confirm(' . esc_attr(wp_json_encode('La bozza attuale verrà sostituita da una nuova versione scritta dall’IA. Continuare?')) . ')"' : '';
+                echo '<p><button type="submit" class="button button-primary" data-sn-busy="L’IA sta scrivendo… può servire fino a un minuto"' . $confirm . '>' . ($body !== '' ? 'Riscrivi la bozza con l’IA' : 'Scrivi la bozza con l’IA') . '</button></p>';
+            } else {
+                echo '<p class="sn-hint">IA non configurata: ' . (current_user_can('manage_options') ? '<a href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-settings') . '#sn-ai') . '">aggiungi una chiave API</a>' : 'chiedi a un amministratore di aggiungere una chiave API') . ', oppure scrivi il resoconto a mano qui sotto.</p>';
+            }
+            echo '</form>';
+        }
+        echo '<details class="sn-nested-details"><summary>Quali dati vengono inviati all’IA</summary><p class="sn-hint">Solo questi fatti: nomi e versioni dei componenti, date, conteggi, stato tecnico. Mai credenziali, email, nomi degli amministratori o percorsi dei file.</p><pre class="sn-facts">'
+            . esc_html(wp_json_encode(Integra_Sentinel_Reports::facts($site, $period['ym'], (string) ($draft['notes'] ?? '')), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '</pre></details>';
+        echo '</section>';
+
+        echo '<section class="sn-panel"><h3>2 · Rileggi e correggi</h3><p class="sn-hint">Titoli con <code>## </code>, elenchi con <code>- </code>. Il cliente vede il testo solo dopo l’approvazione; ogni modifica successiva va riapprovata.'
+            . (!empty($draft['model']) ? ' Ultima bozza scritta con <code>' . self::e($draft['model']) . '</code>.' : '') . '</p>';
+        if ($manage) {
+            Integra_Sentinel_Admin::form_start('report_draft', 'integra-sentinel-reports', array('site_id' => $id, 'ym' => $period['ym'], '_sn_site' => $id, '_sn_ym' => $period['ym']));
+            echo '<textarea name="body" rows="22" class="large-text sn-draft-body" placeholder="## Il mese in breve&#10;…">' . esc_textarea($body) . '</textarea>';
+            echo '<p class="sn-actions"><button type="submit" class="button">Salva</button> <button type="submit" class="button button-primary" name="approve" value="1">' . ($status === 'approved' || $status === 'sent' ? 'Salva e mantieni approvato' : 'Approva il resoconto') . '</button></p></form>';
+        } else { echo $body !== '' ? '<div class="sn-draft-preview">' . Integra_Sentinel_AI::to_html($body) . '</div>' : '<p class="sn-muted">Nessun resoconto.</p>'; }
+        echo '</section>';
+
+        echo '<section class="sn-panel"><h3>3 · Anteprima e invio</h3><p class="sn-hint">Il cliente riceve un’email con il resoconto in alto e, sotto, i numeri del mese: aggiornamenti, disponibilità, sicurezza e prossimi passi.</p><div class="sn-actions">';
+        echo '<a class="button" target="_blank" rel="noopener" href="' . esc_url(Integra_Sentinel_Admin::document_url('monthly', $id, $period['ym'], true)) . '">Anteprima ↗</a>';
+        if ($manage) {
+            $me = wp_get_current_user();
+            Integra_Sentinel_Admin::form_start('report_send', 'integra-sentinel-reports', array('site_id' => $id, 'ym' => $period['ym'], 'to' => (string) $me->user_email, '_sn_site' => $id, '_sn_ym' => $period['ym']));
+            echo '<button class="button" type="submit">Invia una prova a me</button></form>';
+            if (empty($meta['contact_email'])) { echo '<span class="sn-hint">Per inviarlo al cliente imposta l’email nella <a href="' . esc_url(Integra_Sentinel_Master::sn_admin_url($id) . '#sn-meta') . '">scheda cliente</a>.</span>'; }
+            elseif (!in_array($status, array('approved', 'sent'), true)) { echo '<span class="sn-hint">Approva il resoconto per poterlo inviare a ' . self::e($meta['contact_email']) . '.</span>'; }
+            else {
+                Integra_Sentinel_Admin::form_start('report_send', 'integra-sentinel-reports', array('site_id' => $id, 'ym' => $period['ym'], 'to' => $meta['contact_email'], '_sn_site' => $id, '_sn_ym' => $period['ym']));
+                echo '<button class="button button-primary" type="submit" onclick="return confirm(' . esc_attr(wp_json_encode('Inviare il report di ' . $period['label'] . ' a ' . $meta['contact_email'] . '?')) . ')">' . ($status === 'sent' ? 'Invia di nuovo al cliente' : 'Invia al cliente') . '</button></form>';
+                if ($status === 'sent') { echo '<span class="sn-hint">Inviato a ' . self::e($draft['sent_to']) . ' il ' . self::e(wp_date('d/m/Y H:i', (int) $draft['sent_at'])) . '.</span>'; }
+            }
+        }
+        echo '</div></section></div>';
         Integra_Sentinel_Admin::close();
     }
 
@@ -269,8 +338,8 @@ final class Integra_Sentinel_Admin_Pages {
         $admin = current_user_can('manage_options');
         Integra_Sentinel_Admin::open('integra-sentinel-settings');
         echo '<section class="sn-page-heading"><div><p class="sn-kicker">IMPOSTAZIONI</p><h2>Notifiche, fonti, politiche e accessi</h2><p>Tutto resta sul Master: i siti dei clienti non ricevono né salvano queste impostazioni.</p></div></section>';
-        echo '<nav class="sn-subnav" aria-label="Sezioni delle impostazioni"><a href="#sn-mail">Email</a><a href="#sn-webhooks">Slack · Telegram · Make</a><a href="#sn-sources">Fonti dati</a><a href="#sn-deps-settings">Catalogo premium</a><a href="#sn-policies">Politiche</a><a href="#sn-stack">Stack e stime</a><a href="#sn-branding">Marchio report</a><a href="#sn-access">Accessi</a><a href="#sn-audit">Registro attività</a></nav>';
-        if (!$manage) { echo '<div class="notice notice-info"><p>Hai accesso in sola visione: le impostazioni sono modificabili da chi gestisce Sentinel.</p></div>'; Integra_Sentinel_Admin::close(); return; }
+        echo '<nav class="sn-subnav" aria-label="Sezioni delle impostazioni"><a href="#sn-mail">Email</a><a href="#sn-webhooks">Slack · Telegram · Make</a><a href="#sn-sources">Fonti dati</a><a href="#sn-deps-settings">Catalogo premium</a><a href="#sn-policies">Politiche</a><a href="#sn-stack">Stack e stime</a><a href="#sn-ai">Intelligenza artificiale</a><a href="#sn-branding">Marchio report</a><a href="#sn-access">Accessi</a><a href="#sn-audit">Registro attività</a></nav>';
+        if (!$manage) { echo '<div class="notice notice-info inline"><p>Hai accesso in sola visione: le impostazioni sono modificabili da chi gestisce Sentinel.</p></div>'; Integra_Sentinel_Admin::close(); return; }
 
         echo '<section class="sn-panel" id="sn-mail">';
         Integra_Sentinel_Master::email_settings_form('integra-sentinel-settings');
@@ -342,6 +411,37 @@ final class Integra_Sentinel_Admin_Pages {
         echo '</div></div></div>';
         submit_button('Salva stack e stime', 'secondary', 'submit', false);
         echo '</form></section>';
+
+        $ai = Integra_Sentinel_AI::config();
+        $ai_status = Integra_Sentinel_AI::status();
+        echo '<section class="sn-panel" id="sn-ai"><h3>Intelligenza artificiale per i resoconti ai clienti</h3><p class="sn-hint">L’IA trasforma i dati del mese in un testo comprensibile per il cliente (Report clienti → Prepara il resoconto). Riceve solo nomi e versioni dei componenti, date e conteggi: mai credenziali, email, nomi degli amministratori o percorsi dei file. La chiave è cifrata.</p>';
+        if ($admin) {
+            Integra_Sentinel_Admin::form_start('ai_settings', 'integra-sentinel-settings', array('_sn_anchor' => 'sn-ai'));
+            echo '<div class="sn-form-grid"><label>Fornitore<select name="provider">';
+            foreach (Integra_Sentinel_AI::providers() as $key => $prov) { echo '<option value="' . esc_attr($key) . '"' . selected($ai['provider'], $key, false) . '>' . self::e($prov['label']) . '</option>'; }
+            echo '</select></label>';
+            echo '<label>Chiave API<input type="password" autocomplete="new-password" name="ai_key" placeholder="' . ($ai['key'] !== '' ? 'Configurata: lascia vuoto per mantenerla, “-” per cancellarla' : 'Incolla la chiave') . '"></label>';
+            $stored = (string) (Integra_Sentinel_Settings::get('ai')['model'] ?? '');
+            echo '<label>Modello <small>(vuoto = predefinito del fornitore)</small><input type="text" name="model" value="' . esc_attr($stored) . '" placeholder="' . esc_attr(Integra_Sentinel_AI::providers()[$ai['provider']]['model'] ?: 'nome del modello') . '"></label>';
+            echo '<label>Indirizzo base API <small>(solo per “Compatibile OpenAI”)</small><input type="url" name="base_url" value="' . esc_attr($ai['base_url']) . '" placeholder="https://api.openai.com/v1"></label>';
+            echo '<label>Come rivolgersi al cliente<select name="register"><option value="voi"' . selected($ai['register'], 'voi', false) . '>Voi (“il vostro sito”)</option><option value="lei"' . selected($ai['register'], 'lei', false) . '>Lei (“il Suo sito”)</option><option value="tu"' . selected($ai['register'], 'tu', false) . '>Tu (“il tuo sito”)</option></select></label>';
+            echo '<label class="sn-span-2">Indicazioni di stile <small>(facoltative)</small><textarea name="style" rows="2" placeholder="Es.: frasi brevi; chiudi sempre ricordando che siamo disponibili per chiarimenti.">' . esc_textarea($ai['style']) . '</textarea></label></div>';
+            echo '<ul class="sn-hint">';
+            foreach (Integra_Sentinel_AI::providers() as $prov) { echo '<li><strong>' . self::e($prov['label']) . '</strong>: ' . self::e($prov['hint']) . '</li>'; }
+            echo '</ul>';
+            submit_button('Salva', 'secondary', 'submit', false);
+            echo '</form>';
+            if ($ai['key'] !== '') {
+                Integra_Sentinel_Admin::form_start('ai_test', 'integra-sentinel-settings', array('_sn_anchor' => 'sn-ai'));
+                echo '<p><button class="button" type="submit">Verifica il collegamento</button></p></form>';
+            }
+            if (!empty($ai_status['at'])) {
+                echo '<p class="sn-hint">Ultima verifica ' . self::e(wp_date('d/m/Y H:i', (int) $ai_status['at'])) . ' con <code>' . self::e($ai_status['model']) . '</code>: '
+                    . (!empty($ai_status['ok']) ? self::badge('Funziona', 'ok') : self::badge('Non riuscita', 'danger') . ' ' . self::e($ai_status['error'])) . '</p>';
+                if (!empty($ai_status['models'])) { echo '<p class="sn-hint">Modelli Flash disponibili con questa chiave: <code>' . implode('</code> · <code>', array_map('esc_html', $ai_status['models'])) . '</code></p>'; }
+            }
+        } else { echo '<p class="sn-muted">Solo gli amministratori possono configurare la chiave API.</p>'; }
+        echo '</section>';
 
         $b = Integra_Sentinel_Settings::get('branding');
         echo '<section class="sn-panel" id="sn-branding"><h3>Marchio dei report clienti</h3>';

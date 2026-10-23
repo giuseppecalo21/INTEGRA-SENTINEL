@@ -19,7 +19,9 @@ final class Integra_Sentinel_Reports {
         }
         $start = new DateTimeImmutable(sprintf('%04d-%02d-01 00:00:00', $m[1], $m[2]), wp_timezone());
         $end = $start->modify('+1 month');
-        return array('ym' => $start->format('Y-m'), 'start' => $start->getTimestamp(), 'end' => $end->getTimestamp(), 'label' => wp_date('F Y', $start->getTimestamp()));
+        // I documenti sono in italiano anche se il Master usa un'altra lingua o non ha le traduzioni installate.
+        $months = array(1 => 'gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre');
+        return array('ym' => $start->format('Y-m'), 'start' => $start->getTimestamp(), 'end' => $end->getTimestamp(), 'label' => $months[(int) $start->format('n')] . ' ' . $start->format('Y'));
     }
 
     private static function shell($title, $subtitle, $body) {
@@ -36,6 +38,7 @@ final class Integra_Sentinel_Reports {
             . '.kpi b{display:block;font-size:24px;color:var(--c);line-height:1.2}.kpi span{font-size:11.5px;color:#5c6e80}'
             . 'table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #edf1f5;vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#6b7c8d}'
             . '.pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;background:#eef3f7;color:#3f5568}.ok{background:#e8f7f0;color:#14724f}.warn{background:#fff6e2;color:#8a5d0b}.bad{background:#fdecee;color:#a11f35}'
+            . '.story{font-size:14.5px;line-height:1.65;margin:8px 0 6px}.story h3:first-child{margin-top:10px}'
             . '.note{background:#f6f9fb;border-left:3px solid var(--c);padding:10px 14px;margin:12px 0;color:#2e4356}ul{padding-left:20px}li{margin:3px 0}'
             . 'footer{padding:16px 30px;background:#f6f8fa;border-top:1px solid #e3e9ef;font-size:11px;color:#6b7c8d}.toolbar{max-width:880px;margin:16px auto 0;text-align:right}'
             . '.toolbar button{font:inherit;padding:8px 14px;border:1px solid #c9d4de;background:#fff;border-radius:6px;cursor:pointer}'
@@ -50,7 +53,7 @@ final class Integra_Sentinel_Reports {
     }
 
     /** Aggiornamenti e incidenti del mese, stato attuale e prossimi passi: il documento che giustifica il canone. */
-    public static function monthly_html($site, $ym) {
+    public static function monthly_html($site, $ym, $draft_preview = false) {
         $period = self::month_bounds($ym);
         $id = (string) $site['id'];
         $events = Integra_Sentinel_Store::events($id, $period['start'], $period['end'], 1000);
@@ -65,6 +68,13 @@ final class Integra_Sentinel_Reports {
         $integrity = count((array) ($site['integrity_findings'] ?? array()));
 
         $html = '<h1>Report di manutenzione</h1><p class="sub">' . self::e($site['label']) . ' · ' . self::e($site['url']) . ' · ' . self::e(ucfirst($period['label'])) . '</p>';
+        // Resoconto scritto per il cliente: entra nel report solo dopo l'approvazione (l'anteprima mostra anche le bozze).
+        $draft = Integra_Sentinel_Store::draft_get($id, $period['ym']);
+        if ($draft && trim((string) $draft['body']) !== '' && ($draft_preview || in_array($draft['status'], array('approved', 'sent'), true))) {
+            $b = Integra_Sentinel_Settings::get('branding');
+            if ($draft['status'] === 'draft') { $html .= '<p class="note" style="border-left-color:#c58a12">Anteprima di una bozza non ancora approvata: il cliente non la vede finché non viene approvata.</p>'; }
+            $html .= '<div class="story">' . Integra_Sentinel_AI::to_html($draft['body'], preg_match('/^#[0-9a-f]{6}$/i', (string) $b['color']) ? $b['color'] : '#0c8997') . '</div><h2>I numeri del mese</h2>';
+        }
         $html .= '<div class="kpis"><div class="kpi"><b>' . count($updates) . '</b><span>aggiornamenti applicati</span></div>'
             . '<div class="kpi"><b>' . ($uptime ? self::e(number_format_i18n($uptime['pct'], 2)) . '%' : 'n.d.') . '</b><span>disponibilità del sito</span></div>'
             . '<div class="kpi"><b>' . (int) $m['affected'] . '</b><span>componenti con vulnerabilità note oggi</span></div>'
@@ -114,6 +124,147 @@ final class Integra_Sentinel_Reports {
             }
         }
         return self::shell('Report di manutenzione', $site['label'] . ' · ' . ucfirst($period['label']), $html);
+    }
+
+    /**
+     * Fatti del mese per il resoconto scritto con l'IA: solo dati verificabili, senza email, amministratori o percorsi.
+     * Ogni motivazione viene dai dati (vulnerabilita' corrette, blocchi rilevati, eccezioni approvate, note dell'agenzia).
+     */
+    public static function facts($site, $ym, $notes = '') {
+        $period = self::month_bounds($ym);
+        $id = (string) $site['id'];
+        $r = (array) ($site['report'] ?? array());
+        $a = Integra_Sentinel_Analysis::site($site);
+        $cache = (array) get_option(Integra_Sentinel_Master::FEEDS, array());
+        $m = Integra_Sentinel_Master::sn_metrics($site, $cache);
+        $severity = function($tier) { return strtolower(Integra_Sentinel_Master::sn_severity($tier)); };
+
+        // Nome visualizzato → slug, per ritrovare i feed dei componenti citati negli eventi.
+        $by_name = array();
+        foreach ((array) ($r['plugins'] ?? array()) as $p) { $by_name['plugin'][(string) $p['name']] = (string) $p['slug']; }
+        foreach ((array) ($r['themes'] ?? array()) as $t) { $by_name['theme'][(string) $t['name']] = (string) $t['slug']; }
+
+        $done = array(); $added = array(); $removed = array();
+        foreach (array_reverse(Integra_Sentinel_Store::events($id, $period['start'], $period['end'], 1000)) as $e) {
+            $date = wp_date('d/m/Y', (int) $e['at']);
+            if ($e['type'] === 'install') { $added[] = array('data' => $date, 'componente' => trim(substr($e['message'], strlen('Installato ')))); continue; }
+            if ($e['type'] === 'remove') { $removed[] = array('data' => $date, 'componente' => trim(substr($e['message'], strlen('Rimosso ')))); continue; }
+            if (!in_array($e['type'], array('update', 'core'), true) || !preg_match('/^(?:\[MU\] )?(.+): (\S*) → (\S*)$/u', (string) $e['message'], $mm)) { continue; }
+            $name = $mm[1]; $from = $mm[2]; $to = $mm[3];
+            $type = $e['type'] === 'core' ? 'core' : (isset($by_name['plugin'][$name]) ? 'plugin' : (isset($by_name['theme'][$name]) ? 'theme' : ''));
+            $item = array('data' => $date, 'componente' => $name, 'tipo' => array('core' => 'WordPress', 'plugin' => 'plugin', 'theme' => 'tema', '' => 'componente')[$type],
+                'da' => $from, 'a' => $to, 'salto' => self::step($from, $to));
+            if ($type !== '') {
+                $fixed = Integra_Sentinel_Master::advisories_fixed($type, $type === 'core' ? '' : $by_name[$type][$name], $from, $to);
+                if ($fixed) {
+                    $tiers = array_column($fixed, 'tier');
+                    $top = 'unknown';
+                    foreach (array('critical', 'high', 'medium', 'low') as $tier) { if (in_array($tier, $tiers, true)) { $top = $tier; break; } }
+                    $item['vulnerabilita_corrette'] = array('numero' => count($fixed), 'gravita_massima' => $severity($top));
+                }
+            }
+            $done[] = $item;
+        }
+
+        // Aggiornamenti disponibili ma non applicati, con il motivo solo se rilevato dai dati.
+        $pending = array();
+        $reasons_for = function($subject) use ($a) {
+            $out = array();
+            if (!$a) { return $out; }
+            foreach ($a['bottlenecks'] as $b) {
+                if ((string) ($b['node'] ?? '') === $subject || (string) $b['subject'] === $subject) { $out[] = $b['title'] . ': ' . $b['detail']; }
+            }
+            foreach ($a['waived'] as $b) {
+                if ((string) ($b['node'] ?? '') === $subject || (string) $b['subject'] === $subject) { $out[] = 'Scelta concordata: ' . (string) ($b['waiver']['reason'] ?? ''); }
+            }
+            return array_values(array_unique($out));
+        };
+        if ($a) {
+            foreach ($a['graph']['nodes'] as $n) {
+                if (($n['new'] ?? '') === '' || in_array($n['role'], array('env', 'missing'), true)) { continue; }
+                $why = $reasons_for((string) $n['id']);
+                if (!$why && !in_array($n['status'], array('ok', 'update'), true)) { $why = array_slice((array) $n['reasons'], 0, 2); }
+                $pending[] = array('componente' => $n['name'], 'tipo' => 'plugin', 'installata' => $n['ver'] ?? '', 'disponibile' => $n['new'], 'motivo' => $why ? implode(' ', $why) : null);
+            }
+            foreach ($a['themes']['themes'] as $t) {
+                if ($t['update'] === '' || $t['role'] === '') { continue; }
+                $why = $reasons_for((string) $t['slug']);
+                if (!$why && $t['status'] !== 'update') { $why = array_slice((array) $t['reasons'], 0, 2); }
+                $pending[] = array('componente' => $t['name'], 'tipo' => 'tema', 'installata' => $t['version'], 'disponibile' => $t['update'], 'motivo' => $why ? implode(' ', $why) : null);
+            }
+        }
+        if (!empty($r['core_update'])) { $pending[] = array('componente' => 'WordPress', 'tipo' => 'WordPress', 'installata' => (string) $r['wp'], 'disponibile' => (string) $r['core_update'], 'motivo' => null); }
+
+        $vulnerable = array();
+        foreach ($m['groups'] as $g) {
+            $fixed_in = '';
+            foreach ((array) $g['items'] as $f) { if (!empty($f['fixed']) && ($fixed_in === '' || version_compare((string) $f['fixed'], $fixed_in, '>'))) { $fixed_in = (string) $f['fixed']; } }
+            $vulnerable[] = array('componente' => $g['name'], 'segnalazioni' => (int) $g['count'], 'gravita_massima' => $severity($g['max_tier']), 'corretta_dalla_versione' => $fixed_in ?: null);
+        }
+
+        $client_actions = array(); $hosting_actions = array();
+        foreach ($a ? $a['bottlenecks'] : array() as $b) {
+            if ($b['owner'] === 'cliente') { $client_actions[] = $b['title'] . ' — ' . $b['action']; }
+            elseif ($b['owner'] === 'hosting') { $hosting_actions[] = $b['title'] . ' — ' . $b['action']; }
+        }
+
+        $tasks = array();
+        foreach (Integra_Sentinel_Store::tasks(array('site_id' => $id, 'status' => 'done', 'limit' => 200)) as $t) {
+            if ((int) $t['closed_at'] < $period['start'] || (int) $t['closed_at'] >= $period['end']) { continue; }
+            $tasks[] = array('intervento' => $t['title'], 'nota' => $t['notes'] !== '' ? $t['notes'] : null);
+        }
+
+        $uptime = Integra_Sentinel_Store::uptime($id, $period['start'], $period['end']);
+        $incidents = array();
+        foreach (self::incidents($id, $period['start'], $period['end']) as $i) { $incidents[] = array('inizio' => wp_date('d/m/Y H:i', $i['from']), 'durata' => self::duration($i['to'] - $i['from'])); }
+        $backup = null;
+        if ($a) { foreach ($a['environment']['checks'] as $c) { if ($c['key'] === 'backup') { $backup = trim($c['value'] . '. ' . $c['hint'], '. '); } } }
+
+        $facts = array(
+            'sito' => (string) $site['label'],
+            'periodo' => ucfirst($period['label']),
+            'aggiornamenti_applicati' => $done,
+            'componenti_aggiunti' => $added,
+            'componenti_rimossi' => $removed,
+            'interventi_completati' => $tasks,
+            'aggiornamenti_non_ancora_applicati' => $pending,
+            'vulnerabilita_note_ancora_presenti' => $vulnerable,
+            'azioni_richieste_al_cliente' => $client_actions,
+            'azioni_richieste_all_hosting' => $hosting_actions,
+            'disponibilita' => $uptime ? array('percentuale' => round((float) $uptime['pct'], 2), 'controlli' => (int) $uptime['checks'], 'tempo_medio_risposta_ms' => (int) $uptime['ms'], 'interruzioni' => $incidents) : null,
+            'stato_tecnico' => array(
+                'wordpress' => (string) ($r['wp'] ?? ''),
+                'php' => !empty($r['php']) ? Integra_Sentinel_EOL::sentence('php', (string) $r['php']) : null,
+                'certificato_https_giorni_alla_scadenza' => isset($site['ssl_days_left']) && is_int($site['ssl_days_left']) ? $site['ssl_days_left'] : null,
+                'backup' => $backup,
+                'anomalie_di_integrita_aperte' => count((array) ($site['integrity_findings'] ?? array())),
+            ),
+            'note_dell_agenzia' => trim((string) $notes) !== '' ? trim((string) $notes) : null,
+        );
+        // Difesa in profondita': nessuna email lascia il Master, nemmeno se finita per errore nelle note.
+        return json_decode(Integra_Sentinel_Master::mask_emails(wp_json_encode($facts, JSON_UNESCAPED_UNICODE)), true);
+    }
+
+    /** "3.24.7" → "3.25.4" = aggiornamento minore; serve al modello per non esagerare la portata. */
+    private static function step($from, $to) {
+        $a = explode('.', ltrim((string) $from, 'vV')); $b = explode('.', ltrim((string) $to, 'vV'));
+        if (!is_numeric($a[0] ?? '') || !is_numeric($b[0] ?? '')) { return null; }
+        if ((int) $a[0] !== (int) $b[0]) { return 'versione principale'; }
+        if ((int) ($a[1] ?? 0) !== (int) ($b[1] ?? 0)) { return 'versione minore'; }
+        return 'correzione';
+    }
+
+    /** Bozza del resoconto con l'IA, salvata come "da rileggere": non entra nel report finche' non viene approvata. */
+    public static function ai_draft($site, $ym, $notes) {
+        $period = self::month_bounds($ym);
+        $facts = self::facts($site, $period['ym'], $notes);
+        $result = Integra_Sentinel_AI::generate(Integra_Sentinel_AI::report_system_prompt(), Integra_Sentinel_AI::report_user_prompt($facts));
+        if (!$result['ok']) {
+            Integra_Sentinel_Store::draft_save($site['id'], $period['ym'], array('notes' => $notes));
+            return $result;
+        }
+        Integra_Sentinel_Store::draft_save($site['id'], $period['ym'], array('body' => $result['text'], 'notes' => $notes, 'status' => 'draft', 'model' => $result['model']));
+        return $result;
     }
 
     /** Periodi di non raggiungibilita' della home ricavati dalle sonde. */

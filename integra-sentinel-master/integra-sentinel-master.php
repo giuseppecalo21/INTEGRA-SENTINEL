@@ -27,6 +27,7 @@ require_once __DIR__ . '/includes/class-integra-sentinel-fleet.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-notify.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-probe.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-jobs.php';
+require_once __DIR__ . '/includes/class-integra-sentinel-ai.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-reports.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-admin.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-admin-pages.php';
@@ -1155,6 +1156,29 @@ final class Integra_Sentinel_Master {
                 'closed' => !empty($v['operator']['closed']) && $v['operator']['closed'] !== '0');
         }
         return array('status' => $uncertain ? 'review' : 'ok', 'findings' => $findings, 'uncertain' => $uncertain);
+    }
+
+    /**
+     * Vulnerabilita' note che colpivano la versione $from e non colpiscono $to, secondo l'archivio dei feed.
+     * null se il feed del componente non e' disponibile (motivo sconosciuto, da non dedurre).
+     */
+    public static function advisories_fixed($type, $slug, $from, $to) {
+        $cache = (array) get_option(self::FEEDS, array());
+        if ($type === 'core') {
+            $before = self::advisories_for($cache, 'core', (string) $from, (string) $from);
+            $after = self::advisories_for($cache, 'core', (string) $to, (string) $to);
+        } else {
+            $before = self::advisories_for($cache, $type, (string) $slug, (string) $from);
+            $after = self::advisories_for($cache, $type, (string) $slug, (string) $to);
+        }
+        if (!in_array($before['status'], array('ok', 'review'), true)) { return null; }
+        $still = array_column($after['findings'], 'id');
+        $out = array();
+        foreach ($before['findings'] as $f) {
+            if (in_array($f['id'], $still, true)) { continue; }
+            $out[] = array('title' => $f['title'], 'score' => $f['score'], 'tier' => self::sn_tier($f['score']));
+        }
+        return $out;
     }
 
     private static function skip_plugin_lookup($p) {
@@ -2468,7 +2492,7 @@ final class Integra_Sentinel_Master {
             'token'=>'Token WPScan non valido.', 'test_sent'=>'Report di prova accettato dal sistema email. Controlla la casella e lo spam.', 'test_failed'=>'Report non inviato: controlla indirizzi, wp_mail e configurazione SMTP.',
             'busy'=>'Database temporaneamente occupato: nessuna modifica effettuata, riprova.', 'deps'=>'Regole delle dipendenze e catalogo premium salvati.', 'denied'=>'Operazione riservata agli amministratori.');
         $msg = isset($_GET['sentinel_msg']) ? sanitize_key(wp_unslash($_GET['sentinel_msg'])) : '';
-        if (isset($messages[$msg]) && !isset(Integra_Sentinel_Admin::messages()[$msg])) { echo '<div class="notice notice-info"><p>' . self::e($messages[$msg]) . '</p></div>'; }
+        if (isset($messages[$msg]) && !isset(Integra_Sentinel_Admin::messages()[$msg])) { echo '<div class="notice inline notice-info"><p>' . self::e($messages[$msg]) . '</p></div>'; }
         if ($once) {
             echo '<section class="sn-panel sn-secret"><h2>Credenziali da copiare adesso</h2><p>Questi dati saranno visibili una sola volta. Incollali nelle impostazioni del Client, oppure usa un codice di abbinamento dalla scheda del sito (Gestione sito).</p>';
             foreach (array('URL Master'=>untrailingslashit(home_url('/')),'ID sito'=>$once['id'],'Chiave segreta'=>$once['secret']) as $label => $value) {

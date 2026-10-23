@@ -75,6 +75,13 @@ final class Integra_Sentinel_Admin {
             'probe' => array('Controllo di raggiungibilità eseguito.', 'success'),
             'report_sent' => array('Report inviato.', 'success'),
             'report_fail' => array('Report non inviato: controlla l’indirizzo del cliente e la configurazione email.', 'error'),
+            'ai_saved' => array('Impostazioni dell’intelligenza artificiale salvate.', 'success'),
+            'ai_ok' => array('Collegamento riuscito: il modello risponde correttamente.', 'success'),
+            'ai_fail' => array('Collegamento non riuscito: vedi il messaggio nella sezione Intelligenza artificiale.', 'error'),
+            'draft_ai' => array('Bozza scritta dall’IA: rileggila, correggila se serve e approvala prima di inviarla.', 'success'),
+            'draft_ai_fail' => array('L’IA non ha prodotto la bozza: vedi il messaggio sopra il testo.', 'error'),
+            'draft_saved' => array('Resoconto salvato.', 'success'),
+            'draft_approved' => array('Resoconto approvato: ora compare nel report mensile e nell’email al cliente.', 'success'),
             'daily' => array('Andamenti, promemoria e interventi ricalcolati.', 'success'),
             'intel' => array('Dati da WordPress.org ed Envato aggiornati (a lotti: ripeti se il parco è grande).', 'success'),
             'invalid' => array('Dati non validi: nessuna modifica effettuata.', 'error'),
@@ -110,7 +117,7 @@ final class Integra_Sentinel_Admin {
     public static function notice() {
         $msg = isset($_GET['sentinel_msg']) ? sanitize_key(wp_unslash($_GET['sentinel_msg'])) : '';
         $messages = self::messages();
-        if (isset($messages[$msg])) { echo '<div class="notice notice-' . esc_attr($messages[$msg][1]) . '"><p>' . self::e($messages[$msg][0]) . '</p></div>'; }
+        if (isset($messages[$msg])) { echo '<div class="notice inline notice-' . esc_attr($messages[$msg][1]) . '"><p>' . self::e($messages[$msg][0]) . '</p></div>'; }
     }
 
     public static function form_start($cmd, $return, $extra = array(), $class = '') {
@@ -456,7 +463,7 @@ final class Integra_Sentinel_Admin {
         $page = isset($_POST['_sn_return']) ? sanitize_key(wp_unslash($_POST['_sn_return'])) : 'integra-sentinel';
         if (!isset(self::pages()[$page])) { $page = 'integra-sentinel'; }
         $args = array('sentinel_msg' => $msg);
-        foreach (array('_sn_site' => 'site', '_sn_product' => 'product', '_sn_view' => 'view') as $field => $arg) {
+        foreach (array('_sn_site' => 'site', '_sn_product' => 'product', '_sn_view' => 'view', '_sn_ym' => 'ym') as $field => $arg) {
             if (!empty($_POST[$field])) { $args[$arg] = sanitize_text_field(wp_unslash($_POST[$field])); }
         }
         $anchor = isset($_POST['_sn_anchor']) ? sanitize_html_class(wp_unslash($_POST['_sn_anchor'])) : '';
@@ -472,7 +479,7 @@ final class Integra_Sentinel_Admin {
         if (!Integra_Sentinel_Settings::can_manage()) { wp_die('Operazione non autorizzata.', '', array('response' => 403)); }
         check_admin_referer('integra_sentinel_admin');
         $cmd = sanitize_key(self::post('cmd'));
-        $admin_only = array('envato_token', 'webhooks', 'roles', 'pair_code');
+        $admin_only = array('envato_token', 'webhooks', 'roles', 'pair_code', 'ai_settings', 'ai_test');
         if (in_array($cmd, $admin_only, true) && !current_user_can('manage_options')) { self::back('denied'); }
         $sites = Integra_Sentinel_Master::sites();
         $site_id = sanitize_text_field(self::post('site_id'));
@@ -615,9 +622,44 @@ final class Integra_Sentinel_Admin {
             case 'report_send':
                 if (!isset($sites[$site_id])) { self::back('invalid'); }
                 $to = sanitize_email(self::post('to'));
-                $ok = $to !== '' && Integra_Sentinel_Reports::send_monthly($sites[$site_id], sanitize_text_field(self::post('ym')), $to);
-                Integra_Sentinel_Store::log('report_send', ($ok ? 'inviato a ' : 'non inviato a ') . $to . ' · ' . sanitize_text_field(self::post('ym')), $site_id);
+                $ym = Integra_Sentinel_Reports::month_bounds(sanitize_text_field(self::post('ym')))['ym'];
+                $ok = $to !== '' && Integra_Sentinel_Reports::send_monthly($sites[$site_id], $ym, $to);
+                Integra_Sentinel_Store::log('report_send', ($ok ? 'inviato a ' : 'non inviato a ') . $to . ' · ' . $ym, $site_id);
+                // Il resoconto approvato risulta inviato solo quando parte verso il contatto del cliente, non le prove a se stessi.
+                $draft = Integra_Sentinel_Store::draft_get($site_id, $ym);
+                $client_email = (string) ($sites[$site_id]['meta']['contact_email'] ?? '');
+                if ($ok && $draft && in_array($draft['status'], array('approved', 'sent'), true) && $client_email !== '' && strtolower($to) === strtolower($client_email)) {
+                    Integra_Sentinel_Store::draft_save($site_id, $ym, array('status' => 'sent', 'sent_to' => $to));
+                }
                 self::back($ok ? 'report_sent' : 'report_fail');
+            case 'ai_settings':
+                $ok = Integra_Sentinel_AI::save(array('provider' => self::post('provider'), 'model' => self::post('model'), 'base_url' => self::post('base_url'),
+                    'key' => self::post('ai_key'), 'register' => self::post('register'), 'style' => self::post('style')));
+                Integra_Sentinel_Store::log('ai_settings', $ok ? 'salvate' : 'non valide');
+                self::back($ok ? 'ai_saved' : 'invalid');
+            case 'ai_test':
+                self::back(Integra_Sentinel_AI::test() ? 'ai_ok' : 'ai_fail');
+            case 'report_ai':
+                if (!isset($sites[$site_id])) { self::back('invalid'); }
+                $ym = Integra_Sentinel_Reports::month_bounds(sanitize_text_field(self::post('ym')))['ym'];
+                $result = Integra_Sentinel_Reports::ai_draft($sites[$site_id], $ym, (string) self::post('notes'));
+                if (!$result['ok']) { set_transient('integra_sentinel_ai_error_' . get_current_user_id(), $result['error'], 10 * MINUTE_IN_SECONDS); }
+                Integra_Sentinel_Store::log('report_ai', ($result['ok'] ? 'bozza scritta con ' : 'bozza non riuscita con ') . $result['model'] . ' · ' . $ym, $site_id);
+                self::back($result['ok'] ? 'draft_ai' : 'draft_ai_fail');
+            case 'report_draft':
+                if (!isset($sites[$site_id])) { self::back('invalid'); }
+                $ym = Integra_Sentinel_Reports::month_bounds(sanitize_text_field(self::post('ym')))['ym'];
+                $approve = self::post('approve') !== '';
+                $body = (string) self::post('body');
+                if ($approve && trim($body) === '') { self::back('invalid'); }
+                $fields = array('body' => $body);
+                // Ogni modifica dopo l'approvazione torna "da rileggere", salvo riapprovazione esplicita.
+                $old = Integra_Sentinel_Store::draft_get($site_id, $ym);
+                if ($approve) { $fields['status'] = 'approved'; }
+                elseif (!$old || trim((string) $old['body']) !== trim(sanitize_textarea_field($body))) { $fields['status'] = 'draft'; }
+                $ok = Integra_Sentinel_Store::draft_save($site_id, $ym, $fields);
+                if ($ok) { Integra_Sentinel_Store::log('report_draft', ($approve ? 'approvato' : 'salvato') . ' · ' . $ym, $site_id); }
+                self::back($ok ? ($approve ? 'draft_approved' : 'draft_saved') : 'invalid');
             case 'daily_now':
                 Integra_Sentinel_Jobs::maybe_daily(true);
                 self::back('daily');
@@ -639,13 +681,14 @@ final class Integra_Sentinel_Admin {
         nocache_headers();
         header('Content-Type: text/html; charset=UTF-8');
         echo $type === 'onboarding' ? Integra_Sentinel_Reports::onboarding_html($sites[$site_id])
-            : Integra_Sentinel_Reports::monthly_html($sites[$site_id], isset($_GET['ym']) ? sanitize_text_field(wp_unslash($_GET['ym'])) : '');
+            : Integra_Sentinel_Reports::monthly_html($sites[$site_id], isset($_GET['ym']) ? sanitize_text_field(wp_unslash($_GET['ym'])) : '', !empty($_GET['preview']));
         exit;
     }
 
-    public static function document_url($type, $site_id, $ym = '') {
+    public static function document_url($type, $site_id, $ym = '', $preview = false) {
         $args = array('action' => 'integra_sentinel_document', 'type' => $type, 'site' => $site_id);
         if ($ym !== '') { $args['ym'] = $ym; }
+        if ($preview) { $args['preview'] = 1; }
         return wp_nonce_url(add_query_arg($args, admin_url('admin-post.php')), 'integra_sentinel_document');
     }
 

@@ -738,6 +738,15 @@
     });
   });
 
+  // Pulsanti che avviano operazioni lunghe (bozza scritta dall'IA): disattivati con un messaggio d'attesa.
+  all('[data-sn-busy]').forEach(function (button) {
+    var form = button.form;
+    if (!form) return;
+    form.addEventListener('submit', function () {
+      setTimeout(function () { button.disabled = true; button.textContent = button.getAttribute('data-sn-busy'); }, 0);
+    });
+  });
+
   // Copia dei testi pronti (richieste al cliente e all'hosting).
   all('[data-sn-copy]').forEach(function (button) {
     button.addEventListener('click', function () {
