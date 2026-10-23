@@ -3,7 +3,7 @@ Contributors: integra
 Tags: wordpress, vulnerability, monitoring, security, updates
 Requires at least: 6.5
 Requires PHP: 7.4
-Stable tag: 1.9.1
+Stable tag: 1.9.2
 License: GPLv2 or later
 
 Monitoraggio centralizzato degli aggiornamenti e delle vulnerabilita di siti WordPress.
@@ -11,6 +11,10 @@ Author: Integra | https://integracorporate.it/
 
 Principio: il Master e' in SOLA LETTURA verso i siti dei clienti. Non installa, non aggiorna e non modifica nulla:
 riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il lavoro pesante resta sul Master.
+
+== 1.9.2 - 24 October 2026 ==
+* Storico: un solo pulsante "Salva tutti i motivi" registra tutte le note della pagina (prima ogni riga aveva il suo modulo e salvarne una faceva perdere le altre non ancora salvate).
+* Avviso di modifiche non salvate in tutte le pagine di Sentinel: prima di lasciare la pagina o di inviare un altro modulo che le farebbe perdere.
 
 == 1.9.1 - 24 October 2026 ==
 * Nuova pagina Storico: tutti gli aggiornamenti, le installazioni e le rimozioni di tutti i siti, mese per mese (si apre sul mese in corso), filtrabili per sito. Per ogni cambiamento si puo' scrivere il motivo, che entra nel resoconto per il cliente e nella tabella del report mensile.

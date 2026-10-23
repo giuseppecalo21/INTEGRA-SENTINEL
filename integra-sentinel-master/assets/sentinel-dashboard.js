@@ -742,6 +742,30 @@
     });
   });
 
+  // Modifiche non salvate: avviso prima di lasciare la pagina o di inviare un altro modulo (che ricaricherebbe la pagina).
+  var dirtyForms = [];
+  all('.sn-app form').forEach(function (form) {
+    form.addEventListener('input', function (ev) {
+      if (ev.target.type === 'search') return;
+      if (dirtyForms.indexOf(form) === -1) dirtyForms.push(form);
+    });
+    form.addEventListener('submit', function (ev) {
+      var others = dirtyForms.filter(function (f) { return f !== form; });
+      if (others.length && !window.confirm('Ci sono modifiche non salvate in un’altra sezione della pagina: andranno perse. Continuare?')) {
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        return;
+      }
+      dirtyForms = [];
+      window.snSubmitting = true;
+    });
+  });
+  window.addEventListener('beforeunload', function (ev) {
+    if (window.snSubmitting || !dirtyForms.length) return;
+    ev.preventDefault();
+    ev.returnValue = '';
+  });
+
   // Pulsanti che avviano operazioni lunghe (bozza scritta dall'IA): disattivati con un messaggio d'attesa.
   all('[data-sn-busy]').forEach(function (button) {
     var form = button.form;

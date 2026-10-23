@@ -86,7 +86,9 @@ final class Integra_Sentinel_Admin {
             'drafts_none' => array('Nessuna bozza da preparare: tutti i siti con un inventario hanno già un resoconto per questo mese (o l’IA non è configurata).', 'warning'),
             'drafts_cancelled' => array('Preparazione delle bozze interrotta. Le bozze già scritte restano.', 'success'),
             'component_notes' => array('Spiegazioni salvate: compariranno nei report di questo sito.', 'success'),
-            'event_note' => array('Motivo salvato: verrà usato nel resoconto per il cliente.', 'success'),
+            'event_notes' => array('Motivi salvati: verranno usati nel resoconto per il cliente.', 'success'),
+            'event_notes_none' => array('Nessun motivo modificato: non c’era niente da salvare.', 'info'),
+            'event_notes_partial' => array('Alcuni motivi non sono stati salvati: ricarica la pagina e controlla.', 'error'),
             'draft_approved' => array('Resoconto approvato: ora compare nel report mensile e nell’email al cliente.', 'success'),
             'daily' => array('Andamenti, promemoria e interventi ricalcolati.', 'success'),
             'intel' => array('Dati da WordPress.org ed Envato aggiornati (a lotti: ripeti se il parco è grande).', 'success'),
@@ -677,12 +679,18 @@ final class Integra_Sentinel_Admin {
                 $ok = Integra_Sentinel_Reports::save_component_notes($site_id, $rows);
                 if ($ok) { Integra_Sentinel_Store::log('component_notes', 'spiegazioni sui componenti salvate', $site_id); }
                 self::back($ok ? 'component_notes' : 'busy');
-            case 'event_note':
-                $event = Integra_Sentinel_Store::event_get(absint(self::post('id')));
-                if (!$event) { self::back('invalid'); }
-                $ok = Integra_Sentinel_Store::event_note((int) $event['id'], (string) self::post('note'));
-                if ($ok) { Integra_Sentinel_Store::log('event_note', $event['message'], $event['site_id']); }
-                self::back($ok ? 'event_note' : 'invalid');
+            case 'event_notes':
+                // Si scrivono solo le righe cambiate rispetto a quanto mostrato nella pagina.
+                $orig = (array) self::post('orig', array());
+                $saved = 0; $failed = 0;
+                foreach ((array) self::post('notes', array()) as $eid => $note) {
+                    $eid = absint($eid);
+                    if (!$eid || (string) $note === (string) ($orig[$eid] ?? '')) { continue; }
+                    $event = Integra_Sentinel_Store::event_get($eid);
+                    if ($event && Integra_Sentinel_Store::event_note($eid, (string) $note)) { ++$saved; Integra_Sentinel_Store::log('event_note', $event['message'], $event['site_id']); }
+                    else { ++$failed; }
+                }
+                self::back($failed ? 'event_notes_partial' : ($saved ? 'event_notes' : 'event_notes_none'));
             case 'ai_settings':
                 $ok = Integra_Sentinel_AI::save(array('provider' => self::post('provider'), 'model' => self::post('model'), 'base_url' => self::post('base_url'),
                     'key' => self::post('ai_key'), 'register' => self::post('register'), 'style' => self::post('style'), 'auto_drafts' => self::post('auto_drafts')));

@@ -284,6 +284,11 @@ final class Integra_Sentinel_Admin_Pages {
         if (!$events) {
             echo '<div class="sn-panel sn-empty"><p>Nessun cambiamento registrato a ' . self::e($period['label']) . ($site_id !== '' ? ' per ' . self::e($sites[$site_id]['label']) : '') . '.' . ($period['ym'] !== $this_month ? ' <a href="' . esc_url($link(array('ym' => $this_month))) . '">Guarda il mese in corso →</a>' : '') . '</p></div>';
         } else {
+            if ($manage) {
+                // Un solo modulo per tutta la tabella: "Salva" registra tutti i motivi della pagina, non solo una riga.
+                Integra_Sentinel_Admin::form_start('event_notes', 'integra-sentinel-history', array('_sn_ym' => $period['ym'], '_sn_site' => $site_id, '_sn_type' => $type), 'sn-history-form');
+                echo '<p class="sn-history-save"><button type="submit" class="button button-primary">Salva tutti i motivi</button></p>';
+            }
             echo '<div class="sn-table-wrap"><table class="sn-simple-table sn-history"><thead><tr><th>Data</th>' . ($site_id === '' ? '<th>Sito</th>' : '') . '<th>Cambiamento</th><th>Motivo <small>(per il resoconto al cliente)</small></th></tr></thead><tbody>';
             foreach ($events as $e) {
                 $tone = array('update' => 'brand', 'core' => 'brand', 'install' => 'ok', 'remove' => 'muted', 'admin' => 'warn')[$e['type']] ?? 'muted';
@@ -291,12 +296,14 @@ final class Integra_Sentinel_Admin_Pages {
                 if ($site_id === '') { echo '<td><a href="' . esc_url($link(array('ym' => $period['ym'], 'site' => $e['site_id']))) . '">' . self::e($sites[$e['site_id']]['label'] ?? 'Sito rimosso') . '</a></td>'; }
                 echo '<td>' . self::badge($labels[$e['type']] ?? $e['type'], $tone) . ' ' . self::e(self::event_text($e)) . (($e['flags'] ?? '') === 'auto' ? ' ' . self::badge('automatico', 'muted') : '') . '</td><td>';
                 if ($manage && in_array($e['type'], array('update', 'core', 'install', 'remove'), true)) {
-                    Integra_Sentinel_Admin::form_start('event_note', 'integra-sentinel-history', array('id' => $e['id'], '_sn_ym' => $period['ym'], '_sn_site' => $site_id, '_sn_type' => $type, '_sn_anchor' => 'sn-ev-' . (int) $e['id']), 'sn-note-form');
-                    echo '<input type="text" name="note" maxlength="1000" value="' . esc_attr((string) $e['note']) . '" placeholder="Es.: corregge un problema al checkout segnalato dal cliente" aria-label="Motivo"> <button type="submit" class="button button-small">Salva</button></form>';
+                    $eid = (int) $e['id'];
+                    echo '<input type="text" class="sn-note-input" name="notes[' . $eid . ']" maxlength="1000" value="' . esc_attr((string) $e['note']) . '" placeholder="Es.: corregge un problema al checkout segnalato dal cliente" aria-label="Motivo">'
+                        . '<input type="hidden" name="orig[' . $eid . ']" value="' . esc_attr((string) $e['note']) . '">';
                 } else { echo self::e((string) $e['note']); }
                 echo '</td></tr>';
             }
             echo '</tbody></table></div>';
+            if ($manage) { echo '<p class="sn-history-save"><button type="submit" class="button button-primary">Salva tutti i motivi</button></p></form>'; }
         }
         echo '<p class="sn-hint">“automatico” = applicato da WordPress con gli aggiornamenti automatici (rilevato dal Client 1.8 o successivo). Lo storico viene conservato per 2 anni. Il motivo non è obbligatorio: se manca, il resoconto dice solo che il componente è stato aggiornato (o che chiudeva falle di sicurezza note, quando risulta dai database delle vulnerabilità).</p></section>';
         Integra_Sentinel_Admin::close();
