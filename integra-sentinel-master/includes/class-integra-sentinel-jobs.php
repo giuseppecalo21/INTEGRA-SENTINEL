@@ -1,7 +1,7 @@
 <?php
 /**
  * Integra Sentinel — lavori giornalieri del Master: metriche per gli andamenti, promemoria delle licenze,
- * chiusura automatica degli interventi risolti, pulizia dell'archivio. Avviati dall'audit orario.
+ * chiusura automatica degli interventi risolti, data di apertura dei punti aperti, pulizia dell'archivio. Avviati dall'audit orario.
  */
 
 if (!defined('ABSPATH')) { exit; }
@@ -24,6 +24,7 @@ final class Integra_Sentinel_Jobs {
             self::snapshot_metrics($today, $fleet);
             self::license_reminders();
             self::auto_resolve_tasks($fleet);
+            Integra_Sentinel_Reports::track_open($fleet);
             Integra_Sentinel_Store::cleanup();
             Integra_Sentinel_Reports::maybe_auto_drafts();
             return true;

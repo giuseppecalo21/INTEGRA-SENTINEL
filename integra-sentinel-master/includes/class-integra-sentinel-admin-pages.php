@@ -234,7 +234,7 @@ final class Integra_Sentinel_Admin_Pages {
     /* ---------- Storico ---------- */
 
     public static function event_types() {
-        return array('update' => 'Aggiornamento', 'core' => 'WordPress', 'install' => 'Installato', 'remove' => 'Rimosso', 'admin' => 'Amministratori', 'note' => 'Nota');
+        return array('update' => 'Aggiornamento', 'core' => 'WordPress', 'install' => 'Installato', 'remove' => 'Rimosso', 'admin' => 'Amministratori', 'backup' => 'Backup', 'note' => 'Nota');
     }
 
     /** Testo dell'evento senza ripetere l'etichetta del tipo ("Installato …", "Rimosso …"). */
@@ -249,7 +249,7 @@ final class Integra_Sentinel_Admin_Pages {
         $period = Integra_Sentinel_Reports::month_bounds($ym);
         $site_id = isset($_GET['site']) ? sanitize_text_field(wp_unslash($_GET['site'])) : '';
         if (!isset($sites[$site_id])) { $site_id = ''; }
-        $filters = array('updates' => array('Aggiornamenti', array('update', 'core')), 'changes' => array('Aggiornamenti, installazioni e rimozioni', array('update', 'core', 'install', 'remove')), 'all' => array('Tutto, anche amministratori', array()));
+        $filters = array('updates' => array('Aggiornamenti', array('update', 'core')), 'changes' => array('Aggiornamenti, installazioni e rimozioni', array('update', 'core', 'install', 'remove')), 'backups' => array('Backup registrati', array('backup')), 'all' => array('Tutto, anche amministratori', array()));
         $type = isset($_GET['type']) ? sanitize_key(wp_unslash($_GET['type'])) : 'changes';
         if (!isset($filters[$type])) { $type = 'changes'; }
         $events = Integra_Sentinel_Store::events_between($period['start'], $period['end'], $site_id, $filters[$type][1], 2000);
@@ -291,11 +291,11 @@ final class Integra_Sentinel_Admin_Pages {
             }
             echo '<div class="sn-table-wrap"><table class="sn-simple-table sn-history"><thead><tr><th>Data</th>' . ($site_id === '' ? '<th>Sito</th>' : '') . '<th>Cambiamento</th><th>Motivo <small>(per il resoconto al cliente)</small></th></tr></thead><tbody>';
             foreach ($events as $e) {
-                $tone = array('update' => 'brand', 'core' => 'brand', 'install' => 'ok', 'remove' => 'muted', 'admin' => 'warn')[$e['type']] ?? 'muted';
+                $tone = array('update' => 'brand', 'core' => 'brand', 'install' => 'ok', 'remove' => 'muted', 'admin' => 'warn', 'backup' => substr((string) $e['flags'], -3) === '-ko' ? 'danger' : 'ok')[$e['type']] ?? 'muted';
                 echo '<tr id="sn-ev-' . (int) $e['id'] . '"><td>' . self::e(wp_date('d/m/Y H:i', (int) $e['at'])) . '</td>';
                 if ($site_id === '') { echo '<td><a href="' . esc_url($link(array('ym' => $period['ym'], 'site' => $e['site_id']))) . '">' . self::e($sites[$e['site_id']]['label'] ?? 'Sito rimosso') . '</a></td>'; }
                 echo '<td>' . self::badge($labels[$e['type']] ?? $e['type'], $tone) . ' ' . self::e(self::event_text($e)) . (($e['flags'] ?? '') === 'auto' ? ' ' . self::badge('automatico', 'muted') : '') . '</td><td>';
-                if ($manage && in_array($e['type'], array('update', 'core', 'install', 'remove'), true)) {
+                if ($manage && in_array($e['type'], array('update', 'core', 'install', 'remove', 'backup'), true)) {
                     $eid = (int) $e['id'];
                     echo '<input type="text" class="sn-note-input" name="notes[' . $eid . ']" maxlength="1000" value="' . esc_attr((string) $e['note']) . '" placeholder="Es.: corregge un problema al checkout segnalato dal cliente" aria-label="Motivo">'
                         . '<input type="hidden" name="orig[' . $eid . ']" value="' . esc_attr((string) $e['note']) . '">';
@@ -454,6 +454,9 @@ final class Integra_Sentinel_Admin_Pages {
         $month_updates = (int) (Integra_Sentinel_Store::update_counts($period['start'], $period['end'])[$id] ?? 0);
         $history_url = Integra_Sentinel_Admin::url('integra-sentinel-history', array('ym' => $period['ym'], 'site' => $id));
         echo '<p class="sn-hint">' . ($month_updates ? 'A ' . self::e($period['label']) . ' sono registrati <a href="' . esc_url($history_url) . '">' . $month_updates . ' aggiornamenti</a>: nello Storico puoi scrivere il motivo di ciascuno.' : 'Nessun aggiornamento registrato a ' . self::e($period['label']) . '. <a href="' . esc_url($history_url) . '">Apri lo Storico</a> per controllare, oppure scegli un altro mese.') . '</p>';
+        $backups = count(Integra_Sentinel_Store::backups($id, $period['start'], $period['end'], 100));
+        echo '<p class="sn-hint">' . ($backups ? ($backups === 1 ? '1 backup registrato' : $backups . ' backup registrati') . ' a ' . self::e($period['label']) . '.' : 'Nessun backup registrato a mano a ' . self::e($period['label']) . '.')
+            . ' Se il backup lo fa l’hosting o lo fai a mano, <a href="' . esc_url(Integra_Sentinel_Master::sn_admin_url($id) . '#sn-backup') . '">registralo nella scheda del sito</a>: comparirà nel report.</p>';
         self::component_notes_panel($site, $period, $manage);
         echo '<section class="sn-panel"><h3>2 · Note per questo mese <small class="sn-muted">(facoltative)</small></h3><p class="sn-hint">Scrivi qui ciò che i dati non sanno: perché hai lasciato un aggiornamento in sospeso, cosa hai verificato, accordi presi con il cliente. L’IA le userà come fonte affidabile.</p>';
         if ($manage) {
@@ -480,7 +483,7 @@ final class Integra_Sentinel_Admin_Pages {
         } else { echo $body !== '' ? '<div class="sn-draft-preview">' . Integra_Sentinel_AI::to_html($body) . '</div>' : '<p class="sn-muted">Nessun resoconto.</p>'; }
         echo '</section>';
 
-        echo '<section class="sn-panel"><h3>4 · Anteprima e invio</h3><p class="sn-hint">Il cliente riceve un’email con il resoconto in alto e, sotto, i numeri del mese: aggiornamenti, disponibilità, sicurezza e prossimi passi.</p><div class="sn-actions">';
+        echo '<section class="sn-panel"><h3>4 · Anteprima e invio</h3><p class="sn-hint">Il cliente riceve un’email con il giudizio d’insieme e il resoconto in alto e, sotto, i numeri del mese: aggiornamenti e falle chiuse, sorveglianza svolta, backup, punti aperti con chi deve intervenire e scadenze.</p><div class="sn-actions">';
         echo '<a class="button" target="_blank" rel="noopener" href="' . esc_url(Integra_Sentinel_Admin::document_url('monthly', $id, $period['ym'], true)) . '">Anteprima ↗</a>';
         if ($manage) {
             $me = wp_get_current_user();
@@ -688,6 +691,7 @@ final class Integra_Sentinel_Admin_Pages {
         echo '<label>Pannello dell’hosting (link, mai credenziali)<input type="url" name="panel_url" value="' . esc_attr($meta['panel_url'] ?? '') . '"></label>';
         echo '<label>Finestra di manutenzione<input type="text" name="window" maxlength="80" value="' . esc_attr($meta['window'] ?? '') . '" placeholder="mar–gio 8:00–10:00"></label>';
         echo '<label class="sn-inline-check"><input type="checkbox" name="hosting_backup" value="1"' . checked(!empty($meta['hosting_backup']), true, false) . '> Backup gestito dall’hosting</label>';
+        echo '<label>Come funziona il backup dell’hosting (facoltativo)<input type="text" name="backup_desc" maxlength="160" value="' . esc_attr($meta['backup_desc'] ?? '') . '" placeholder="es. giornaliero, conservato 14 giorni"></label>';
         echo '<label class="sn-inline-check"><input type="checkbox" name="probe_off" value="1"' . checked(!empty($meta['probe_off']), true, false) . '> Non controllare la raggiungibilità di questo sito</label>';
         echo '<label class="sn-span-2">Testo che deve comparire nella home (facoltativo)<input type="text" name="home_expect" maxlength="120" value="' . esc_attr($meta['home_expect'] ?? '') . '" placeholder="es. il nome dell’azienda nel footer"></label>';
         echo '<fieldset class="sn-span-2"><legend>Pagine chiave controllate insieme alla home (stesso dominio)</legend>';
@@ -758,6 +762,44 @@ final class Integra_Sentinel_Admin_Pages {
                 . self::e($r === null ? $pg['url'] : ('HTTP ' . (int) $r['code'] . ' · ' . (int) $r['ms'] . ' ms' . (!empty($r['error']) && empty($r['ok']) ? ' · ' . $r['error'] : ''))) . '</small></div>';
         }
         echo '</div>' . (!empty($state['last_at']) ? '<p class="sn-hint">Ultimo controllo: ' . self::e(wp_date('d/m/Y H:i', (int) $state['last_at'])) . '</p>' : '') . '</section>';
+    }
+
+    /**
+     * Registro dei backup: per i backup che nessun plugin comunica (hosting, copie manuali, servizi esterni)
+     * l'agenzia annota quelli verificati. Valgono come backup recente e compaiono nel report del cliente.
+     */
+    public static function backup_panel($site) {
+        $id = (string) $site['id'];
+        $meta = (array) ($site['meta'] ?? array());
+        $rows = Integra_Sentinel_Store::backups($id, 0, 0, 12);
+        $methods = Integra_Sentinel_Store::backup_methods();
+        $manage = Integra_Sentinel_Settings::can_manage();
+        echo '<section class="sn-panel sn-backups" id="sn-backup"><div class="sn-section-head"><div><h3>Registro dei backup</h3><p>Se il backup non viene letto da un plugin (backup dell’hosting, copie fatte a mano, servizi esterni), registralo qui dopo averlo verificato: conta come backup recente per Sentinel ed entra nel report mensile del cliente. Una prova di ripristino riuscita è la garanzia più solida che si possa documentare.</p></div>'
+            . (!empty($meta['hosting_backup']) ? self::badge('Backup dell’hosting indicato nella scheda cliente', 'ok') : '') . '</div>';
+        if ($manage) {
+            Integra_Sentinel_Admin::form_start('backup_add', 'integra-sentinel', array('site_id' => $id, '_sn_site' => $id, '_sn_anchor' => 'sn-backup'));
+            echo '<div class="sn-form-grid"><label>Data<input type="date" name="backup_date" required max="' . esc_attr(wp_date('Y-m-d')) . '" value="' . esc_attr(wp_date('Y-m-d')) . '"></label>';
+            echo '<label>Tipo<select name="method">';
+            foreach ($methods as $key => $label) { echo '<option value="' . esc_attr($key) . '"' . selected($key, !empty($meta['hosting_backup']) ? 'hosting' : 'manual', false) . '>' . self::e($label) . '</option>'; }
+            echo '</select></label><label>Esito<select name="outcome"><option value="ok">Riuscito e verificato</option><option value="ko">Non riuscito</option></select></label>';
+            echo '<label>Dettaglio (lo legge anche il cliente)<input type="text" name="detail" maxlength="200" placeholder="es. copia completa di file e database dal pannello dell’hosting"></label></div>';
+            echo '<p><button class="button button-primary" type="submit">Registra il backup</button></p></form>';
+        }
+        if (!$rows) { echo '<p class="sn-muted">Nessun backup registrato a mano.</p>'; }
+        else {
+            echo '<div class="sn-table-wrap"><table class="sn-simple-table"><thead><tr><th>Data</th><th>Tipo</th><th>Esito</th><th>Dettaglio</th>' . ($manage ? '<th></th>' : '') . '</tr></thead><tbody>';
+            foreach ($rows as $b) {
+                echo '<tr><td>' . self::e(wp_date('d/m/Y', $b['at'])) . '</td><td>' . self::e($b['label']) . '</td><td>' . ($b['ok'] ? self::badge('Riuscito', 'ok') : self::badge('Non riuscito', 'danger')) . '</td><td>' . self::e($b['detail']) . '</td>';
+                if ($manage) {
+                    echo '<td>';
+                    Integra_Sentinel_Admin::form_start('backup_delete', 'integra-sentinel', array('id' => $b['id'], 'site_id' => $id, '_sn_site' => $id, '_sn_anchor' => 'sn-backup'));
+                    echo '<button class="button-link button-link-delete" type="submit" onclick="return confirm(' . esc_attr(wp_json_encode('Eliminare questa registrazione?')) . ')">Elimina</button></form></td>';
+                }
+                echo '</tr>';
+            }
+            echo '</tbody></table></div>';
+        }
+        echo '</section>';
     }
 
     /** Testi pronti per il cliente e per l'hosting. */

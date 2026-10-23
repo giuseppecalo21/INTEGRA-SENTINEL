@@ -224,6 +224,65 @@ final class Integra_Sentinel_Store {
         return is_array($rows) ? $rows : array();
     }
 
+    /** Elimina un evento solo se e' del tipo atteso (es. un backup registrato a mano per errore). */
+    public static function event_delete($id, $type) {
+        global $wpdb;
+        return (bool) $wpdb->delete(self::table('events'), array('id' => absint($id), 'type' => (string) $type), array('%d', '%s'));
+    }
+
+    /* ---------- Backup registrati a mano dall'agenzia (eventi di tipo "backup") ---------- */
+
+    /** Modalita' registrabili: servono anche quando sul sito non c'e' un plugin di backup leggibile. */
+    public static function backup_methods() {
+        return array('hosting' => 'Backup dell’hosting', 'manual' => 'Backup manuale', 'external' => 'Servizio di backup esterno',
+            'plugin' => 'Plugin di backup', 'restore' => 'Prova di ripristino');
+    }
+
+    /** Registra un backup verificato (o non riuscito). Ritorna l'id dell'evento, 0 se i dati non sono validi. */
+    public static function backup_add($site_id, $at, $method, $ok, $detail = '', $note = '') {
+        global $wpdb;
+        $methods = self::backup_methods();
+        $at = (int) $at;
+        if (!isset($methods[$method]) || $site_id === '' || $at <= 0 || $at > time() + DAY_IN_SECONDS) { return 0; }
+        $detail = substr(sanitize_text_field((string) $detail), 0, 200);
+        $done = $wpdb->insert(self::table('events'), array(
+            'site_id' => substr((string) $site_id, 0, 36),
+            'at' => $at,
+            'type' => 'backup',
+            'message' => $methods[$method] . ($detail !== '' ? ': ' . $detail : ''),
+            'note' => substr(sanitize_textarea_field((string) $note), 0, 1000),
+            'flags' => $method . ($ok ? '' : '-ko'),
+        ), array('%s', '%d', '%s', '%s', '%s', '%s'));
+        return $done ? (int) $wpdb->insert_id : 0;
+    }
+
+    /** Evento "backup" → id, at, method, label, ok, detail, note. */
+    public static function backup_row($e) {
+        $methods = self::backup_methods();
+        $flags = (string) ($e['flags'] ?? '');
+        $method = preg_replace('/-ko$/', '', $flags);
+        $label = $methods[$method] ?? 'Backup';
+        $message = (string) ($e['message'] ?? '');
+        $detail = strpos($message, $label . ': ') === 0 ? substr($message, strlen($label . ': ')) : ($message === $label ? '' : $message);
+        return array('id' => (int) ($e['id'] ?? 0), 'at' => (int) $e['at'], 'method' => $method, 'label' => $label, 'ok' => substr($flags, -3) !== '-ko',
+            'detail' => $detail, 'note' => trim((string) ($e['note'] ?? '')));
+    }
+
+    /** Backup registrati per un sito, dal piu' recente. */
+    public static function backups($site_id, $since = 0, $until = 0, $limit = 50) {
+        return array_map(array(__CLASS__, 'backup_row'), self::events($site_id, $since, $until, $limit, 'backup'));
+    }
+
+    /** Ultimo backup registrato per ogni sito: site_id => riga (una sola query per tutto il parco). */
+    public static function last_backups() {
+        global $wpdb;
+        $table = self::table('events');
+        $rows = $wpdb->get_results("SELECT e.id, e.site_id, e.at, e.message, e.note, e.flags FROM {$table} e INNER JOIN (SELECT site_id, MAX(at) AS at FROM {$table} WHERE type = 'backup' GROUP BY site_id) m ON m.site_id = e.site_id AND m.at = e.at WHERE e.type = 'backup' ORDER BY e.id ASC", ARRAY_A);
+        $out = array();
+        foreach ((array) $rows as $row) { $out[$row['site_id']] = self::backup_row($row); }
+        return $out;
+    }
+
     /* ---------- Registro attivita' del Master ---------- */
 
     public static function log($action, $detail = '', $site_id = '') {
@@ -413,6 +472,16 @@ final class Integra_Sentinel_Store {
         return array('pct' => round(100 * (int) $row['ok'] / (int) $row['n'], 2), 'checks' => (int) $row['n'], 'ms' => (int) round((float) $row['ms']));
     }
 
+    /** Controlli per ogni pagina sorvegliata (0 = home) nel periodo: url_idx => checks, ok. */
+    public static function probe_counts($site_id, $since, $until) {
+        global $wpdb;
+        $table = self::table('probes');
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT url_idx, COUNT(*) AS n, SUM(ok) AS ok FROM {$table} WHERE site_id = %s AND at >= %d AND at < %d GROUP BY url_idx", (string) $site_id, (int) $since, (int) $until), ARRAY_A);
+        $out = array();
+        foreach ((array) $rows as $r) { $out[(int) $r['url_idx']] = array('checks' => (int) $r['n'], 'ok' => (int) $r['ok']); }
+        return $out;
+    }
+
     /* ---------- Metriche giornaliere ---------- */
 
     public static function save_metrics($day, $site_id, $data) {
@@ -433,6 +502,12 @@ final class Integra_Sentinel_Store {
             if (is_array($data)) { $out[$r['day']][$r['site_id']] = $data; }
         }
         return $out;
+    }
+
+    /** Giorni del periodo in cui il sito e' stato analizzato (istantanea giornaliera delle metriche). */
+    public static function metric_days($site_id, $from_day, $to_day) {
+        global $wpdb;
+        return (int) $wpdb->get_var($wpdb->prepare('SELECT COUNT(*) FROM ' . self::table('metrics') . ' WHERE site_id = %s AND day >= %s AND day < %s', (string) $site_id, $from_day, $to_day));
     }
 
     /* ---------- Pulizia periodica ---------- */

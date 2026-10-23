@@ -3,7 +3,7 @@
  * Plugin Name: Integra Sentinel Master
  * Plugin URI: https://integracorporate.it/
  * Description: Centrale privata in sola lettura per aggiornamenti, colli di bottiglia, licenze, dipendenze, vulnerabilita CVE e integrita anti-intrusione dei siti WordPress gestiti da Integra.
- * Version: 1.9.2
+ * Version: 1.10.0
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: Integra
@@ -34,7 +34,7 @@ require_once __DIR__ . '/includes/class-integra-sentinel-admin-pages.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-cli.php';
 
 final class Integra_Sentinel_Master {
-    const VERSION = '1.9.2';
+    const VERSION = '1.10.0';
     const SITES = 'integra_sentinel_master_sites';
     const FEEDS = 'integra_sentinel_master_feeds';
     const MAIL = 'integra_sentinel_master_email';
@@ -494,6 +494,7 @@ final class Integra_Sentinel_Master {
             'panel_url' => self::safe_link(isset($input['panel_url']) ? (string) wp_unslash($input['panel_url']) : ''),
             'window' => $field('window', 80),
             'hosting_backup' => !empty($input['hosting_backup']),
+            'backup_desc' => $field('backup_desc', 160),
             'probe_off' => !empty($input['probe_off']),
             'home_expect' => $field('home_expect', 120),
             'pages' => $pages,
@@ -3099,6 +3100,7 @@ final class Integra_Sentinel_Master {
         self::sn_recent_changes($site);
         Integra_Sentinel_Admin_Pages::requests_panel($site);
         Integra_Sentinel_Admin_Pages::probe_panel($site);
+        Integra_Sentinel_Admin_Pages::backup_panel($site);
 
         // Dettagli tecnici: tutto cio' che serve per indagare, chiuso per non affollare la scheda.
         echo '<details class="sn-panel sn-config sn-tech" id="sn-tech" data-sn-tech><summary><span><strong>Dettagli tecnici</strong><small>Mappa delle dipendenze, origine dei plugin, server, temi, controlli SEO/SSL/log, gravità e copertura delle scansioni</small></span><span class="sn-chevron">⌄</span></summary><div class="sn-config-body">';

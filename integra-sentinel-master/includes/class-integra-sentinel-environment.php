@@ -40,7 +40,8 @@ final class Integra_Sentinel_Environment {
 
     /**
      * @param array $report inventario sanificato
-     * @param array $ctx    policies, meta (scheda cliente), plugins (slug => plugin), has_envato (bool)
+     * @param array $ctx    policies, meta (scheda cliente), plugins (slug => plugin), has_envato (bool),
+     *                      manual_backup (ultimo backup registrato a mano, vedi Integra_Sentinel_Store::backup_row)
      */
     public static function evaluate($report, $ctx = array()) {
         $report = is_array($report) ? $report : array();
@@ -168,30 +169,46 @@ final class Integra_Sentinel_Environment {
             }
         }
 
-        // Backup.
+        // Backup: data letta dal plugin (UpdraftPlus) o backup registrato a mano dall'agenzia; vale il piu' recente.
         $backup = $env['backup'] ?? null;
         $backup_plugins = array_values(array_intersect(self::backup_slugs(), array_keys($plugins)));
         $active_backup = array();
         foreach ($backup_plugins as $slug) { if (!empty($plugins[$slug]['active'])) { $active_backup[] = (string) ($plugins[$slug]['name'] ?? $slug); } }
         $max_days = max(1, (int) ($policies['backup_max_days'] ?? 7));
+        $hosting = !empty($meta['hosting_backup']);
+        $desc = trim((string) ($meta['backup_desc'] ?? ''));
+        $evidence = null;
         if (is_array($backup) && !empty($backup['last'])) {
-            $age = (int) floor((time() - (int) $backup['last']) / DAY_IN_SECONDS);
-            $ok = !empty($backup['ok']);
-            $tone = !$ok ? 'danger' : ($age > $max_days ? 'warn' : 'ok');
-            $checks[] = self::check('backup', 'Backup', ($ok ? 'Ultimo ' : 'Fallito ') . wp_date('d/m/Y', (int) $backup['last']), $tone, 'UpdraftPlus · ' . ($age === 0 ? 'oggi' : $age . ' giorni fa') . '.');
-            if (!$ok || $age > $max_days) {
-                $issues[] = self::issue('backup', 'backup_age', 'Backup', $ok ? 'medium' : 'high', 'agenzia', $ok ? 'Ultimo backup di ' . $age . ' giorni fa' : 'L’ultimo backup non è riuscito',
-                    'Prima di aggiornare serve un backup recente e completo.', 'Eseguire un backup completo e verificarne la riuscita.', $ok ? 10 : 25);
+            $evidence = array('at' => (int) $backup['last'], 'ok' => !empty($backup['ok']), 'source' => 'UpdraftPlus', 'restore' => false);
+        }
+        $manual = $ctx['manual_backup'] ?? null;
+        if (is_array($manual) && !empty($manual['at']) && (!$evidence || (int) $manual['at'] > $evidence['at'])) {
+            $evidence = array('at' => (int) $manual['at'], 'ok' => !empty($manual['ok']), 'source' => (string) $manual['label'] . ' (registrazione manuale)', 'restore' => ($manual['method'] ?? '') === 'restore');
+        }
+        if ($evidence) {
+            $age = max(0, (int) floor((time() - $evidence['at']) / DAY_IN_SECONDS));
+            $date = wp_date('d/m/Y', $evidence['at']);
+            if ($evidence['ok'] && $age > $max_days && $hosting) {
+                // L'hosting esegue i backup da solo: una verifica non recente non significa un backup vecchio.
+                $checks[] = self::check('backup', 'Backup', 'Gestito dall’hosting', 'ok', ($desc !== '' ? $desc . ' · ' : '') . 'Ultima verifica registrata il ' . $date . '.');
+            } else {
+                $tone = !$evidence['ok'] ? 'danger' : ($age > $max_days ? 'warn' : 'ok');
+                $checks[] = self::check('backup', 'Backup', ($evidence['ok'] ? 'Ultimo ' : 'Fallito ') . $date, $tone, $evidence['source'] . ' · ' . ($age === 0 ? 'oggi' : $age . ' giorni fa') . '.');
+                if (!$evidence['ok'] || $age > $max_days) {
+                    $title = $evidence['ok'] ? 'Ultimo backup di ' . $age . ' giorni fa' : ($evidence['restore'] ? 'L’ultima prova di ripristino non è riuscita' : 'L’ultimo backup non è riuscito');
+                    $issues[] = self::issue('backup', 'backup_age', 'Backup', $evidence['ok'] ? 'medium' : 'high', 'agenzia', $title,
+                        'Prima di aggiornare serve un backup recente e completo.', 'Eseguire un backup completo, verificarne la riuscita e registrarlo nella scheda del sito se non è letto da un plugin.', $evidence['ok'] ? 10 : 25);
+                }
             }
         } elseif ($active_backup) {
             $checks[] = self::check('backup', 'Backup', implode(', ', array_slice($active_backup, 0, 2)), 'ok', 'Plugin di backup attivo; data dell’ultimo backup non leggibile.');
-        } elseif (!empty($meta['hosting_backup'])) {
-            $checks[] = self::check('backup', 'Backup', 'Gestito dall’hosting', 'ok', 'Indicato nella scheda cliente.');
+        } elseif ($hosting) {
+            $checks[] = self::check('backup', 'Backup', 'Gestito dall’hosting', 'ok', $desc !== '' ? $desc . '.' : 'Indicato nella scheda cliente.');
         } else {
-            $checks[] = self::check('backup', 'Backup', 'Non rilevato', 'warn', 'Nessun plugin di backup attivo.');
+            $checks[] = self::check('backup', 'Backup', 'Non rilevato', 'warn', 'Nessun plugin di backup attivo e nessun backup registrato.');
             $issues[] = self::issue('backup', 'backup_missing', 'Backup', 'medium', 'agenzia', 'Nessun backup rilevato',
-                'Nessun plugin di backup attivo e nessun backup dell’hosting indicato nella scheda cliente.',
-                'Attivare un backup automatico, oppure segnare nella scheda cliente che il backup è gestito dall’hosting.', 12);
+                'Nessun plugin di backup attivo, nessun backup dell’hosting indicato nella scheda cliente e nessun backup registrato a mano.',
+                'Attivare un backup automatico, segnare nella scheda cliente che il backup è gestito dall’hosting oppure registrare il backup verificato nella scheda del sito.', 12);
         }
 
         // Aggiornamenti automatici e cache oggetti (informativi).

@@ -74,6 +74,8 @@ final class Integra_Sentinel_Admin {
             'site_meta' => array('Scheda cliente salvata.', 'success'),
             'pair' => array('Codice di abbinamento generato: copialo adesso, è valido 30 minuti.', 'success'),
             'probe' => array('Controllo di raggiungibilità eseguito.', 'success'),
+            'backup' => array('Backup registrato: vale come backup recente e comparirà nel report mensile del cliente.', 'success'),
+            'backup_deleted' => array('Registrazione del backup eliminata.', 'success'),
             'report_sent' => array('Report inviato.', 'success'),
             'report_fail' => array('Report non inviato: controlla l’indirizzo del cliente e la configurazione email.', 'error'),
             'ai_saved' => array('Impostazioni dell’intelligenza artificiale salvate.', 'success'),
@@ -637,6 +639,21 @@ final class Integra_Sentinel_Admin {
                 $ok = Integra_Sentinel_Master::save_site_meta($site_id, $_POST);
                 Integra_Sentinel_Store::log('site_meta', 'scheda cliente aggiornata', $site_id);
                 self::back($ok ? 'site_meta' : 'busy');
+            case 'backup_add':
+                if (!isset($sites[$site_id])) { self::back('invalid'); }
+                $day = (string) self::post('backup_date');
+                if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $day, $d) || !checkdate((int) $d[2], (int) $d[3], (int) $d[1])) { self::back('invalid'); }
+                // Oggi = adesso; un giorno passato = mezzogiorno di quel giorno (fuso di WordPress).
+                $at = $day === wp_date('Y-m-d') ? time() : (new DateTimeImmutable($day . ' 12:00:00', wp_timezone()))->getTimestamp();
+                $method = sanitize_key(self::post('method'));
+                $id = Integra_Sentinel_Store::backup_add($site_id, $at, $method, self::post('outcome') !== 'ko', (string) self::post('detail'));
+                if ($id) { Integra_Sentinel_Store::log('backup_add', $method . ' · ' . $day . (self::post('outcome') === 'ko' ? ' · non riuscito' : ''), $site_id); }
+                self::back($id ? 'backup' : 'invalid');
+            case 'backup_delete':
+                $event = Integra_Sentinel_Store::event_get(absint(self::post('id')));
+                $ok = $event && $event['type'] === 'backup' && Integra_Sentinel_Store::event_delete((int) $event['id'], 'backup');
+                if ($ok) { Integra_Sentinel_Store::log('backup_delete', $event['message'] . ' · ' . wp_date('d/m/Y', (int) $event['at']), $event['site_id']); }
+                self::back($ok ? 'backup_deleted' : 'invalid');
             case 'pair_code':
                 if (!isset($sites[$site_id])) { self::back('invalid'); }
                 $code = Integra_Sentinel_Master::pair_code($site_id);

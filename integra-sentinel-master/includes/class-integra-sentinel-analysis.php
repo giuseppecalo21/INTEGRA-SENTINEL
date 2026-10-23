@@ -63,6 +63,7 @@ final class Integra_Sentinel_Analysis {
             'stack' => (array) Integra_Sentinel_Settings::get('stack'),
             'policies' => (array) Integra_Sentinel_Settings::get('policies'),
             'estimates' => (array) Integra_Sentinel_Settings::get('estimates'),
+            'backups' => Integra_Sentinel_Store::last_backups(),
         );
     }
 
@@ -110,7 +111,8 @@ final class Integra_Sentinel_Analysis {
         ));
         $has_envato = false;
         foreach (array_merge($graph['nodes'], $themes['themes']) as $n) { if (!empty($n['envato'])) { $has_envato = true; break; } }
-        $environment = Integra_Sentinel_Environment::evaluate($report, array('policies' => $policies, 'meta' => (array) ($site['meta'] ?? array()), 'plugins' => $plugins, 'has_envato' => $has_envato));
+        $environment = Integra_Sentinel_Environment::evaluate($report, array('policies' => $policies, 'meta' => (array) ($site['meta'] ?? array()), 'plugins' => $plugins, 'has_envato' => $has_envato,
+            'manual_backup' => $ctx['backups'][$id] ?? null));
         $core = self::core_integrity($report, $ctx);
 
         $issues = array_merge($graph['bottlenecks'], $themes['issues'], $environment['issues'], $core['issues'], self::stack_issues($report, $ctx), self::core_branch_issues($report, $ctx));

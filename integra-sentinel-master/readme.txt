@@ -3,7 +3,7 @@ Contributors: integra
 Tags: wordpress, vulnerability, monitoring, security, updates
 Requires at least: 6.5
 Requires PHP: 7.4
-Stable tag: 1.9.2
+Stable tag: 1.10.0
 License: GPLv2 or later
 
 Monitoraggio centralizzato degli aggiornamenti e delle vulnerabilita di siti WordPress.
@@ -11,6 +11,20 @@ Author: Integra | https://integracorporate.it/
 
 Principio: il Master e' in SOLA LETTURA verso i siti dei clienti. Non installa, non aggiorna e non modifica nulla:
 riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il lavoro pesante resta sul Master.
+
+== 1.10.0 - 24 October 2026 ==
+* Registro dei backup nella scheda del sito: backup dell'hosting, backup manuali, servizi esterni, plugin non leggibili e prove di ripristino si registrano a mano (data, tipo, esito, dettaglio). Il backup registrato piu' recente vale come prova di backup per Sentinel, accanto a quello letto da UpdraftPlus; si puo' eliminare una registrazione sbagliata. Le registrazioni compaiono anche nello Storico (filtro "Backup registrati").
+* Scheda cliente: descrizione del backup dell'hosting (es. "giornaliero, conservato 14 giorni"). Con il backup dell'hosting indicato, una verifica non recente non genera piu' l'avviso "backup vecchio".
+* Report mensile ripensato per mostrare il valore della manutenzione e chiarire le responsabilita':
+  - giudizio d'insieme in apertura (sito aggiornato e sorvegliato / punti aperti / rischi aperti), ricavato solo dai dati;
+  - falle di sicurezza chiuse nel mese (nuovo indicatore), colonna "Sicurezza" negli aggiornamenti e giorni trascorsi tra la rilevazione della falla e l'aggiornamento;
+  - "La sorveglianza del mese": controlli di raggiungibilita' della home e delle pagine chiave, giorni di analisi completa, componenti confrontati con i database delle vulnerabilita', file del core verificati, certificato, backup registrati;
+  - "Interventi completati" con il tempo registrato;
+  - sezione "Backup" con le registrazioni del mese e la prova di ripristino riuscita;
+  - "Punti aperti e chi deve intervenire": cio' che dipende da cliente, hosting o produttore (e cio' che trattiene correzioni di sicurezza), scelte concordate con il loro motivo e interventi in attesa, con la data da cui sono aperti;
+  - "Scadenze in arrivo": licenze pagate dal cliente, fine del supporto di PHP e del database, certificato HTTPS che non si rinnova.
+* Data di apertura dei punti aperti registrata ogni giorno. Per i punti gia' aperti all'installazione di questa versione il report scrive "almeno dal", per non attribuire una data che non conosciamo.
+* Resoconto scritto con l'IA: riceve gli stessi dati (falle chiuse, sorveglianza, backup, scadenze, punti aperti con data e responsabile, tempo degli interventi) e nuove istruzioni per descrivere le responsabilita' senza toni di rimprovero.
 
 == 1.9.2 - 24 October 2026 ==
 * Storico: un solo pulsante "Salva tutti i motivi" registra tutte le note della pagina (prima ogni riga aveva il suo modulo e salvarne una faceva perdere le altre non ancora salvate).
