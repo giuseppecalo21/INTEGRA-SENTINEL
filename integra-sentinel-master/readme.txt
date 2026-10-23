@@ -14,6 +14,8 @@ riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il
 
 == 1.9.2 - 24 October 2026 ==
 * Storico: un solo pulsante "Salva tutti i motivi" registra tutte le note della pagina (prima ogni riga aveva il suo modulo e salvarne una faceva perdere le altre non ancora salvate).
+* IA sovraccarica (HTTP 503 "high demand" e simili): nuovi tentativi automatici dopo 4 e 10 secondi, poi un modello di riserva (impostabile, altrimenti un altro modello Flash tra quelli che Google elenca per la chiave con "Verifica il collegamento"). Messaggio d'errore in italiano. Le bozze automatiche bloccate dal sovraccarico tornano in coda e si riprovano dopo 10 minuti (fino a 3 volte).
+* Gemini: limite di lunghezza della risposta piu' ampio, perche' il "ragionamento" dei modelli recenti non tronchi la bozza.
 * Avviso di modifiche non salvate in tutte le pagine di Sentinel: prima di lasciare la pagina o di inviare un altro modulo che le farebbe perdere.
 
 == 1.9.1 - 24 October 2026 ==

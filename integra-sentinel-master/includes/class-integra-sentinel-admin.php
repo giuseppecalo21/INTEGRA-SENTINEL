@@ -693,7 +693,7 @@ final class Integra_Sentinel_Admin {
                 self::back($failed ? 'event_notes_partial' : ($saved ? 'event_notes' : 'event_notes_none'));
             case 'ai_settings':
                 $ok = Integra_Sentinel_AI::save(array('provider' => self::post('provider'), 'model' => self::post('model'), 'base_url' => self::post('base_url'),
-                    'key' => self::post('ai_key'), 'register' => self::post('register'), 'style' => self::post('style'), 'auto_drafts' => self::post('auto_drafts')));
+                    'key' => self::post('ai_key'), 'register' => self::post('register'), 'style' => self::post('style'), 'auto_drafts' => self::post('auto_drafts'), 'fallback' => self::post('fallback')));
                 Integra_Sentinel_Store::log('ai_settings', $ok ? 'salvate' : 'non valide');
                 self::back($ok ? 'ai_saved' : 'invalid');
             case 'ai_test':

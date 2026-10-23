@@ -392,18 +392,31 @@ final class Integra_Sentinel_Reports {
         try {
             $q = self::queue();
             if (!$q) { return; }
+            if ((int) ($q['wait_until'] ?? 0) > time()) {
+                if (!wp_next_scheduled(self::HOOK_QUEUE)) { wp_schedule_single_event((int) $q['wait_until'], self::HOOK_QUEUE); }
+                return;
+            }
             $sites = Integra_Sentinel_Master::sites();
             for ($n = 0; $n < 2 && $q['sites']; ++$n) {
                 $id = array_shift($q['sites']);
                 $existing = Integra_Sentinel_Store::draft_get($id, $q['ym']);
                 if (isset($sites[$id]) && trim((string) ($existing['body'] ?? '')) === '') {
                     $result = self::ai_draft($sites[$id], $q['ym'], (string) ($existing['notes'] ?? ''));
-                    if ($result['ok']) { ++$q['done']; } else { $q['failed'][$id] = $result['error']; }
+                    $retries = (int) ($q['retries'][$id] ?? 0);
+                    if ($result['ok']) { ++$q['done']; unset($q['failed'][$id]); }
+                    elseif (!empty($result['retryable']) && $retries < 3) {
+                        // Fornitore sovraccarico: il sito torna in fondo alla coda e si riprova tra 10 minuti.
+                        $q['sites'][] = $id;
+                        $q['retries'][$id] = $retries + 1;
+                        $q['wait_until'] = time() + 10 * MINUTE_IN_SECONDS;
+                        update_option(self::QUEUE, $q, false);
+                        break;
+                    } else { $q['failed'][$id] = $result['error']; }
                 }
                 update_option(self::QUEUE, $q, false);
             }
             if ($q['sites']) {
-                if (!wp_next_scheduled(self::HOOK_QUEUE)) { wp_schedule_single_event(time() + 30, self::HOOK_QUEUE); }
+                if (!wp_next_scheduled(self::HOOK_QUEUE)) { wp_schedule_single_event(max(time() + 30, (int) ($q['wait_until'] ?? 0)), self::HOOK_QUEUE); }
                 return;
             }
             delete_option(self::QUEUE);
