@@ -3,7 +3,7 @@
  * Plugin Name: Integra Sentinel Master
  * Plugin URI: https://integracorporate.it/
  * Description: Centrale privata in sola lettura per aggiornamenti, colli di bottiglia, licenze, dipendenze, vulnerabilita CVE e integrita anti-intrusione dei siti WordPress gestiti da Integra.
- * Version: 1.9.0
+ * Version: 1.9.1
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: Integra
@@ -34,7 +34,7 @@ require_once __DIR__ . '/includes/class-integra-sentinel-admin-pages.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-cli.php';
 
 final class Integra_Sentinel_Master {
-    const VERSION = '1.9.0';
+    const VERSION = '1.9.1';
     const SITES = 'integra_sentinel_master_sites';
     const FEEDS = 'integra_sentinel_master_feeds';
     const MAIL = 'integra_sentinel_master_email';
@@ -65,7 +65,8 @@ final class Integra_Sentinel_Master {
         add_action('admin_init', array(__CLASS__, 'ensure_digest_schedule'));
         add_action('admin_init', array(__CLASS__, 'ensure_cleanup_schedule'));
         add_action('admin_init', array(__CLASS__, 'ensure_probe_schedule'));
-        add_action('admin_init', array('Integra_Sentinel_Store', 'maybe_upgrade'));
+        // Su init e non solo admin_init: anche cron, REST e WP-CLI trovano lo schema aggiornato dopo un aggiornamento via zip.
+        add_action('init', array('Integra_Sentinel_Store', 'maybe_upgrade'));
         add_action(self::HOOK_CLEANUP, array(__CLASS__, 'clean_nonces'));
         add_action(self::HOOK_DIGEST, array(__CLASS__, 'send_daily_digest'));
         add_action(self::HOOK_RETRY, array(__CLASS__, 'send_daily_digest'));
@@ -2825,6 +2826,25 @@ final class Integra_Sentinel_Master {
     }
 
     /** Colli di bottiglia del sito: dipendenze, licenze, server, temi, integrita' e pulizia, con chi deve agire. */
+    /** Ultimi cambiamenti registrati sul sito, con il motivo scritto dall'agenzia; il resto e' nella pagina Storico. */
+    private static function sn_recent_changes($site) {
+        $events = Integra_Sentinel_Store::events($site['id'], 0, 0, 8, '');
+        $url = Integra_Sentinel_Admin::url('integra-sentinel-history', array('site' => $site['id']));
+        echo '<section class="sn-panel" id="sn-history"><div class="sn-section-head"><div><h3>Ultimi cambiamenti</h3><p>Aggiornamenti, installazioni e rimozioni rilevati confrontando gli inventari. Nello Storico puoi scrivere il motivo di ciascuno.</p></div><a class="button" href="' . esc_url($url) . '">Tutto lo storico →</a></div>';
+        if (!$events && !empty($site['history'])) {
+            foreach (array_slice(array_reverse((array) $site['history']), 0, 8) as $event) { $events[] = array('at' => (int) $event['at'], 'type' => 'note', 'message' => (string) $event['event'], 'note' => ''); }
+        }
+        if (!$events) { echo '<p class="sn-muted">Nessun cambiamento registrato finora.</p></section>'; return; }
+        $labels = Integra_Sentinel_Admin_Pages::event_types();
+        echo '<table class="sn-simple-table"><tbody>';
+        foreach ($events as $e) {
+            $tone = array('update' => 'brand', 'core' => 'brand', 'install' => 'ok', 'remove' => 'muted', 'admin' => 'warn')[$e['type']] ?? 'muted';
+            echo '<tr><td style="width:130px">' . self::e(wp_date('d/m/Y H:i', (int) $e['at'])) . '</td><td>' . self::sn_badge($labels[$e['type']] ?? $e['type'], $tone) . ' ' . self::e(Integra_Sentinel_Admin_Pages::event_text($e))
+                . (trim((string) ($e['note'] ?? '')) !== '' ? '<br><small class="sn-muted">' . self::e($e['note']) . '</small>' : '') . '</td></tr>';
+        }
+        echo '</tbody></table></section>';
+    }
+
     private static function sn_bottleneck_panel($analysis) {
         $list = $analysis['bottlenecks'];
         $kinds = Integra_Sentinel_Fleet::kinds();
@@ -3008,6 +3028,7 @@ final class Integra_Sentinel_Master {
             echo '</div></details>';
         }
         echo '</div><p class="sn-no-results" id="sn-no-results" hidden>Nessun plugin corrisponde alla ricerca o al filtro scelto.</p></section>';
+        self::sn_recent_changes($site);
         Integra_Sentinel_Admin_Pages::requests_panel($site);
         Integra_Sentinel_Admin_Pages::probe_panel($site);
 
@@ -3053,7 +3074,7 @@ final class Integra_Sentinel_Master {
         }
         echo '</div></details>';
         Integra_Sentinel_Admin_Pages::site_meta_form($site);
-        echo '<details class="sn-panel sn-config sn-extra"><summary><span><strong>Temi, MU-Plugins, Amministratori, WPScan, storico e gestione</strong><small>Informazioni complete, storico dei cambi di versione e gestione delle chiavi</small></span><span class="sn-chevron">⌄</span></summary><div class="sn-config-body">';
+        echo '<details class="sn-panel sn-config sn-extra"><summary><span><strong>Temi, MU-Plugins, amministratori, WPScan e collegamento</strong><small>Elenchi completi e gestione delle chiavi del Client</small></span><span class="sn-chevron">⌄</span></summary><div class="sn-config-body">';
         $theme_groups = $m['groups'];
         echo '<h3>Temi installati</h3><table class="sn-simple-table"><thead><tr><th>Tema</th><th>Versione</th><th>Stato</th><th>Advisory</th></tr></thead><tbody>';
         foreach ((array) ($r['themes'] ?? array()) as $t) {
@@ -3078,13 +3099,6 @@ final class Integra_Sentinel_Master {
             echo '<h3>Utenti Amministratori censiti (' . count($sec['admins']) . ')</h3><p class="sn-hint">Solo i nomi utente: le email degli amministratori non lasciano il sito del cliente. Un amministratore nuovo viene segnalato negli alert di integrità.</p><p><code>' . self::e(implode(' · ', array_map(array(__CLASS__, 'mask_admin'), (array) $sec['admins']))) . '</code></p>';
         }
         self::wpscan_detail($site);
-        echo '<h3>Storico versioni e sicurezza</h3><p class="sn-hint">Eventi determinati confrontando gli inventari e gli amministratori tra un invio e il successivo (conservati 2 anni).</p>';
-        $events = Integra_Sentinel_Store::events($site['id'], 0, 0, 300);
-        if (!$events && !empty($site['history'])) {
-            foreach (array_reverse((array) $site['history']) as $event) { $events[] = array('at' => (int) $event['at'], 'message' => (string) $event['event']); }
-        }
-        if (!$events) { echo '<p>Nessun evento registrato.</p>'; }
-        else { echo '<div class="sn-table-wrap"><table class="sn-simple-table"><thead><tr><th>Data</th><th>Evento</th></tr></thead><tbody>'; foreach ($events as $event) { echo '<tr><td>' . self::e(wp_date('d/m/Y H:i', (int) $event['at'])) . '</td><td>' . self::e($event['message']) . '</td></tr>'; } echo '</tbody></table></div>'; }
         if ($admin) {
             echo '<h3>Gestione del collegamento</h3><p class="sn-hint">Il codice di abbinamento collega o ricollega il Client senza copiare la chiave. “Rigenera” mantiene valida la chiave precedente per i giorni di tolleranza; “Revoca” la invalida subito (chiave compromessa).</p><div class="sn-actions sn-danger-actions">';
             Integra_Sentinel_Admin::form_start('pair_code', 'integra-sentinel', array('site_id' => $site['id'], '_sn_site' => $site['id']));

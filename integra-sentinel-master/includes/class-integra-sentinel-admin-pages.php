@@ -231,6 +231,77 @@ final class Integra_Sentinel_Admin_Pages {
         Integra_Sentinel_Admin::close();
     }
 
+    /* ---------- Storico ---------- */
+
+    public static function event_types() {
+        return array('update' => 'Aggiornamento', 'core' => 'WordPress', 'install' => 'Installato', 'remove' => 'Rimosso', 'admin' => 'Amministratori', 'note' => 'Nota');
+    }
+
+    /** Testo dell'evento senza ripetere l'etichetta del tipo ("Installato …", "Rimosso …"). */
+    public static function event_text($e) {
+        return trim((string) preg_replace('/^(Installato|Rimosso)\s+/u', '', (string) $e['message']));
+    }
+
+    /** Tutti i cambiamenti rilevati sui siti, mese per mese, con il motivo scritto dall'agenzia. */
+    public static function history() {
+        $sites = Integra_Sentinel_Master::sites();
+        $ym = isset($_GET['ym']) ? sanitize_text_field(wp_unslash($_GET['ym'])) : wp_date('Y-m');
+        $period = Integra_Sentinel_Reports::month_bounds($ym);
+        $site_id = isset($_GET['site']) ? sanitize_text_field(wp_unslash($_GET['site'])) : '';
+        if (!isset($sites[$site_id])) { $site_id = ''; }
+        $filters = array('updates' => array('Aggiornamenti', array('update', 'core')), 'changes' => array('Aggiornamenti, installazioni e rimozioni', array('update', 'core', 'install', 'remove')), 'all' => array('Tutto, anche amministratori', array()));
+        $type = isset($_GET['type']) ? sanitize_key(wp_unslash($_GET['type'])) : 'changes';
+        if (!isset($filters[$type])) { $type = 'changes'; }
+        $events = Integra_Sentinel_Store::events_between($period['start'], $period['end'], $site_id, $filters[$type][1], 2000);
+        $manage = Integra_Sentinel_Settings::can_manage();
+        $labels = self::event_types();
+        Integra_Sentinel_Admin::open('integra-sentinel-history', self::badge(count($events) . ' cambiamenti', 'brand'));
+        echo '<section class="sn-page-heading"><div><p class="sn-kicker">STORICO</p><h2>Cosa è cambiato sui siti</h2><p>Ogni aggiornamento, installazione o rimozione viene registrato confrontando gli inventari inviati dai Client, di solito pochi minuti dopo l’operazione. Scrivi il motivo accanto agli aggiornamenti: finirà nel resoconto per il cliente.</p></div></section>';
+
+        $this_month = wp_date('Y-m');
+        $last_month = wp_date('Y-m', strtotime('first day of last month', current_time('timestamp')));
+        $link = function($args) use ($site_id, $type) { return Integra_Sentinel_Admin::url('integra-sentinel-history', array_filter($args + array('site' => $site_id, 'type' => $type))); };
+        echo '<form method="get" class="sn-month-form"><input type="hidden" name="page" value="integra-sentinel-history">';
+        echo '<label>Mese <input type="month" name="ym" value="' . esc_attr($period['ym']) . '"></label>';
+        echo '<label>Sito <select name="site"><option value="">Tutti i siti</option>';
+        foreach ($sites as $id => $site) { echo '<option value="' . esc_attr($id) . '"' . selected($site_id, $id, false) . '>' . self::e($site['label']) . '</option>'; }
+        echo '</select></label><label>Mostra <select name="type">';
+        foreach ($filters as $key => $f) { echo '<option value="' . esc_attr($key) . '"' . selected($type, $key, false) . '>' . self::e($f[0]) . '</option>'; }
+        echo '</select></label> <button class="button" type="submit">Mostra</button>';
+        echo ' <a class="button-link" href="' . esc_url($link(array('ym' => $this_month))) . '">Mese in corso</a> · <a class="button-link" href="' . esc_url($link(array('ym' => $last_month))) . '">Mese scorso</a></form>';
+
+        // Siti muti: se il Client non invia, il Master non puo' registrare nulla.
+        $silent = array();
+        foreach ($sites as $id => $site) {
+            if ($site_id !== '' && $id !== $site_id) { continue; }
+            if (empty($site['last_seen']) || time() - (int) $site['last_seen'] > 36 * HOUR_IN_SECONDS) {
+                $silent[] = '<a href="' . esc_url(Integra_Sentinel_Master::sn_admin_url($id)) . '">' . self::e($site['label']) . '</a> (' . (!empty($site['last_seen']) ? 'ultimo inventario ' . self::e(wp_date('d/m/Y H:i', (int) $site['last_seen'])) : 'nessun inventario ricevuto') . ')';
+            }
+        }
+        if ($silent) { echo '<div class="notice notice-warning inline"><p><strong>Questi siti non inviano l’inventario da più di 36 ore, quindi i loro aggiornamenti non vengono registrati:</strong> ' . implode(', ', $silent) . '. Controlla il Client in Impostazioni → Integra Sentinel sul sito.</p></div>'; }
+
+        echo '<section class="sn-section">';
+        if (!$events) {
+            echo '<div class="sn-panel sn-empty"><p>Nessun cambiamento registrato a ' . self::e($period['label']) . ($site_id !== '' ? ' per ' . self::e($sites[$site_id]['label']) : '') . '.' . ($period['ym'] !== $this_month ? ' <a href="' . esc_url($link(array('ym' => $this_month))) . '">Guarda il mese in corso →</a>' : '') . '</p></div>';
+        } else {
+            echo '<div class="sn-table-wrap"><table class="sn-simple-table sn-history"><thead><tr><th>Data</th>' . ($site_id === '' ? '<th>Sito</th>' : '') . '<th>Cambiamento</th><th>Motivo <small>(per il resoconto al cliente)</small></th></tr></thead><tbody>';
+            foreach ($events as $e) {
+                $tone = array('update' => 'brand', 'core' => 'brand', 'install' => 'ok', 'remove' => 'muted', 'admin' => 'warn')[$e['type']] ?? 'muted';
+                echo '<tr id="sn-ev-' . (int) $e['id'] . '"><td>' . self::e(wp_date('d/m/Y H:i', (int) $e['at'])) . '</td>';
+                if ($site_id === '') { echo '<td><a href="' . esc_url($link(array('ym' => $period['ym'], 'site' => $e['site_id']))) . '">' . self::e($sites[$e['site_id']]['label'] ?? 'Sito rimosso') . '</a></td>'; }
+                echo '<td>' . self::badge($labels[$e['type']] ?? $e['type'], $tone) . ' ' . self::e(self::event_text($e)) . '</td><td>';
+                if ($manage && in_array($e['type'], array('update', 'core', 'install', 'remove'), true)) {
+                    Integra_Sentinel_Admin::form_start('event_note', 'integra-sentinel-history', array('id' => $e['id'], '_sn_ym' => $period['ym'], '_sn_site' => $site_id, '_sn_type' => $type, '_sn_anchor' => 'sn-ev-' . (int) $e['id']), 'sn-note-form');
+                    echo '<input type="text" name="note" maxlength="1000" value="' . esc_attr((string) $e['note']) . '" placeholder="Es.: corregge un problema al checkout segnalato dal cliente" aria-label="Motivo"> <button type="submit" class="button button-small">Salva</button></form>';
+                } else { echo self::e((string) $e['note']); }
+                echo '</td></tr>';
+            }
+            echo '</tbody></table></div>';
+        }
+        echo '<p class="sn-hint">Lo storico viene conservato per 2 anni. Il motivo non è obbligatorio: se manca, il resoconto dice solo che il componente è stato aggiornato (o che chiudeva falle di sicurezza note, quando risulta dai database delle vulnerabilità).</p></section>';
+        Integra_Sentinel_Admin::close();
+    }
+
     /* ---------- Report clienti ---------- */
 
     public static function reports() {
@@ -245,14 +316,20 @@ final class Integra_Sentinel_Admin_Pages {
         if (!Integra_Sentinel_AI::configured()) {
             echo '<div class="notice notice-info inline"><p>Per far scrivere le bozze all’IA aggiungi una chiave API in <a href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-settings') . '#sn-ai') . '">Impostazioni → Intelligenza artificiale</a> (Google Gemini ha un piano gratuito). Nel frattempo puoi scrivere i resoconti a mano.</p></div>';
         }
-        echo '<form method="get" class="sn-month-form"><input type="hidden" name="page" value="integra-sentinel-reports"><label>Mese <input type="month" name="ym" value="' . esc_attr($period['ym']) . '"></label> <button class="button" type="submit">Mostra</button></form>';
-        echo '<section class="sn-section"><div class="sn-table-wrap"><table class="sn-simple-table"><thead><tr><th>Sito</th><th>Resoconto di ' . self::e($period['label']) . '</th><th>Documenti</th></tr></thead><tbody>';
-        if (!$sites) { echo '<tr><td colspan="3" class="sn-muted">Nessun sito registrato.</td></tr>'; }
+        $this_month = wp_date('Y-m');
+        $last_month = wp_date('Y-m', strtotime('first day of last month', current_time('timestamp')));
+        echo '<form method="get" class="sn-month-form"><input type="hidden" name="page" value="integra-sentinel-reports"><label>Mese <input type="month" name="ym" value="' . esc_attr($period['ym']) . '"></label> <button class="button" type="submit">Mostra</button>'
+            . ' <a class="button-link" href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-reports', array('ym' => $last_month))) . '">Mese scorso</a> · <a class="button-link" href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-reports', array('ym' => $this_month))) . '">Mese in corso (finora)</a></form>';
+        $counts = Integra_Sentinel_Store::update_counts($period['start'], $period['end']);
+        echo '<section class="sn-section"><div class="sn-table-wrap"><table class="sn-simple-table"><thead><tr><th>Sito</th><th>Aggiornamenti registrati</th><th>Resoconto di ' . self::e($period['label']) . '</th><th>Documenti</th></tr></thead><tbody>';
+        if (!$sites) { echo '<tr><td colspan="4" class="sn-muted">Nessun sito registrato.</td></tr>'; }
         foreach ($sites as $id => $site) {
             $meta = (array) ($site['meta'] ?? array());
             $d = $drafts[$id] ?? null;
             $editor = Integra_Sentinel_Admin::url('integra-sentinel-reports', array('site' => $id, 'ym' => $period['ym']));
-            echo '<tr><td><strong>' . self::e($site['label']) . '</strong><br><small>' . self::e(trim(($meta['contact_name'] ?? '') . ' ' . ($meta['contact_email'] ?? '')) ?: 'Nessun contatto: impostalo nella scheda cliente') . '</small></td><td class="sn-row-actions">';
+            echo '<tr><td><strong>' . self::e($site['label']) . '</strong><br><small>' . self::e(trim(($meta['contact_name'] ?? '') . ' ' . ($meta['contact_email'] ?? '')) ?: 'Nessun contatto: impostalo nella scheda cliente') . '</small></td>';
+            $n = (int) ($counts[$id] ?? 0);
+            echo '<td><a href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-history', array('ym' => $period['ym'], 'site' => $id))) . '">' . ($n ? $n . ' ' . ($n === 1 ? 'aggiornamento' : 'aggiornamenti') : 'nessuno') . '</a></td><td class="sn-row-actions">';
             if ($d && trim((string) $d['body']) !== '') {
                 $tone = array('draft' => 'warn', 'approved' => 'brand', 'sent' => 'ok')[$d['status']] ?? 'muted';
                 echo self::badge($statuses[$d['status']] ?? $d['status'], $tone) . ' <small>' . self::e($d['status'] === 'sent' ? 'il ' . wp_date('d/m/Y', (int) $d['sent_at']) : 'aggiornato il ' . wp_date('d/m/Y', (int) $d['updated_at'])) . '</small> ';
@@ -288,6 +365,9 @@ final class Integra_Sentinel_Admin_Pages {
 
         $ai = Integra_Sentinel_AI::configured();
         echo '<div class="sn-report-steps">';
+        $month_updates = (int) (Integra_Sentinel_Store::update_counts($period['start'], $period['end'])[$id] ?? 0);
+        $history_url = Integra_Sentinel_Admin::url('integra-sentinel-history', array('ym' => $period['ym'], 'site' => $id));
+        echo '<p class="sn-hint">' . ($month_updates ? 'A ' . self::e($period['label']) . ' sono registrati <a href="' . esc_url($history_url) . '">' . $month_updates . ' aggiornamenti</a>: nello Storico puoi scrivere il motivo di ciascuno.' : 'Nessun aggiornamento registrato a ' . self::e($period['label']) . '. <a href="' . esc_url($history_url) . '">Apri lo Storico</a> per controllare, oppure scegli un altro mese.') . '</p>';
         echo '<section class="sn-panel"><h3>1 · Note per questo mese <small class="sn-muted">(facoltative)</small></h3><p class="sn-hint">Scrivi qui ciò che i dati non sanno: perché hai lasciato un aggiornamento in sospeso, cosa hai verificato, accordi presi con il cliente. L’IA le userà come fonte affidabile.</p>';
         if ($manage) {
             Integra_Sentinel_Admin::form_start('report_ai', 'integra-sentinel-reports', array('site_id' => $id, 'ym' => $period['ym'], '_sn_site' => $id, '_sn_ym' => $period['ym']), 'sn-ai-form');

@@ -3,7 +3,7 @@ Contributors: integra
 Tags: wordpress, vulnerability, monitoring, security, updates
 Requires at least: 6.5
 Requires PHP: 7.4
-Stable tag: 1.9.0
+Stable tag: 1.9.1
 License: GPLv2 or later
 
 Monitoraggio centralizzato degli aggiornamenti e delle vulnerabilita di siti WordPress.
@@ -11,6 +11,13 @@ Author: Integra | https://integracorporate.it/
 
 Principio: il Master e' in SOLA LETTURA verso i siti dei clienti. Non installa, non aggiorna e non modifica nulla:
 riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il lavoro pesante resta sul Master.
+
+== 1.9.1 - 24 October 2026 ==
+* Nuova pagina Storico: tutti gli aggiornamenti, le installazioni e le rimozioni di tutti i siti, mese per mese (si apre sul mese in corso), filtrabili per sito. Per ogni cambiamento si puo' scrivere il motivo, che entra nel resoconto per il cliente e nella tabella del report mensile.
+* Avviso nello Storico per i siti che non inviano l'inventario da piu' di 36 ore (i loro aggiornamenti non possono essere registrati).
+* Scheda del sito: "Ultimi cambiamenti" sempre visibile, al posto dello storico nascosto in fondo alla pagina.
+* Report clienti: numero di aggiornamenti registrati per sito nel mese scelto e scorciatoie "Mese scorso" / "Mese in corso"; l'editor del resoconto indica quanti aggiornamenti ci sono e rimanda allo Storico.
+* Lo schema del database si aggiorna anche fuori dall'amministrazione (cron, REST, WP-CLI), cosi' le nuove colonne esistono sempre dopo un aggiornamento via zip.
 
 == 1.9.0 - 24 October 2026 ==
 * Resoconti per i clienti scritti con l'IA (Report clienti → Prepara il resoconto): note dell'agenzia, bozza scritta dall'IA, rilettura e approvazione, anteprima e invio. Il resoconto approvato apre il report mensile e l'email al cliente; le bozze non approvate non escono mai.

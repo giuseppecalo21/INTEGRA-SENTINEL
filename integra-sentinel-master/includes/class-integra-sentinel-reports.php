@@ -89,7 +89,7 @@ final class Integra_Sentinel_Reports {
         if (!$updates) { $html .= '<p class="sub">Nessun cambio di versione registrato nel periodo.</p>'; }
         else {
             $html .= '<table><thead><tr><th>Data</th><th>Componente e versione</th></tr></thead><tbody>';
-            foreach (array_reverse($updates) as $e) { $html .= '<tr><td>' . self::e(wp_date('d/m/Y', (int) $e['at'])) . '</td><td>' . self::e($e['message']) . '</td></tr>'; }
+            foreach (array_reverse($updates) as $e) { $html .= '<tr><td>' . self::e(wp_date('d/m/Y', (int) $e['at'])) . '</td><td>' . self::e($e['message']) . (trim((string) ($e['note'] ?? '')) !== '' ? '<br><small style="color:#5c6e80">' . self::e($e['note']) . '</small>' : '') . '</td></tr>'; }
             $html .= '</tbody></table>';
         }
         if ($installed) {
@@ -147,13 +147,14 @@ final class Integra_Sentinel_Reports {
         $done = array(); $added = array(); $removed = array();
         foreach (array_reverse(Integra_Sentinel_Store::events($id, $period['start'], $period['end'], 1000)) as $e) {
             $date = wp_date('d/m/Y', (int) $e['at']);
-            if ($e['type'] === 'install') { $added[] = array('data' => $date, 'componente' => trim(substr($e['message'], strlen('Installato ')))); continue; }
-            if ($e['type'] === 'remove') { $removed[] = array('data' => $date, 'componente' => trim(substr($e['message'], strlen('Rimosso ')))); continue; }
+            $note = trim((string) ($e['note'] ?? '')) !== '' ? trim((string) $e['note']) : null;
+            if ($e['type'] === 'install') { $added[] = array('data' => $date, 'componente' => trim(substr($e['message'], strlen('Installato '))), 'motivo_scritto_dall_agenzia' => $note); continue; }
+            if ($e['type'] === 'remove') { $removed[] = array('data' => $date, 'componente' => trim(substr($e['message'], strlen('Rimosso '))), 'motivo_scritto_dall_agenzia' => $note); continue; }
             if (!in_array($e['type'], array('update', 'core'), true) || !preg_match('/^(?:\[MU\] )?(.+): (\S*) → (\S*)$/u', (string) $e['message'], $mm)) { continue; }
             $name = $mm[1]; $from = $mm[2]; $to = $mm[3];
             $type = $e['type'] === 'core' ? 'core' : (isset($by_name['plugin'][$name]) ? 'plugin' : (isset($by_name['theme'][$name]) ? 'theme' : ''));
             $item = array('data' => $date, 'componente' => $name, 'tipo' => array('core' => 'WordPress', 'plugin' => 'plugin', 'theme' => 'tema', '' => 'componente')[$type],
-                'da' => $from, 'a' => $to, 'salto' => self::step($from, $to));
+                'da' => $from, 'a' => $to, 'salto' => self::step($from, $to), 'motivo_scritto_dall_agenzia' => $note);
             if ($type !== '') {
                 $fixed = Integra_Sentinel_Master::advisories_fixed($type, $type === 'core' ? '' : $by_name[$type][$name], $from, $to);
                 if ($fixed) {
