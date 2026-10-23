@@ -15,6 +15,7 @@ final class Integra_Sentinel_Notify {
             'emergency' => 'Emergenza: stessa vulnerabilità su più siti',
             'down' => 'Sito non raggiungibile o Client muto',
             'license' => 'Licenze in scadenza',
+            'drafts' => 'Bozze dei resoconti pronte da rileggere',
         );
     }
 

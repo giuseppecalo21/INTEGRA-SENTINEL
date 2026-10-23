@@ -3,7 +3,7 @@ Contributors: integra
 Tags: wordpress, vulnerability, monitoring, security, updates
 Requires at least: 6.5
 Requires PHP: 7.4
-Stable tag: 1.9.0
+Stable tag: 1.9.1
 License: GPLv2 or later
 
 Monitoraggio centralizzato degli aggiornamenti e delle vulnerabilita di siti WordPress.
@@ -11,6 +11,22 @@ Author: Integra | https://integracorporate.it/
 
 Principio: il Master e' in SOLA LETTURA verso i siti dei clienti. Non installa, non aggiorna e non modifica nulla:
 riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il lavoro pesante resta sul Master.
+
+== 1.9.1 - 24 October 2026 ==
+* Nuova pagina Storico: tutti gli aggiornamenti, le installazioni e le rimozioni di tutti i siti, mese per mese (si apre sul mese in corso), filtrabili per sito. Per ogni cambiamento si puo' scrivere il motivo, che entra nel resoconto per il cliente e nella tabella del report mensile.
+* Avviso nello Storico per i siti che non inviano l'inventario da piu' di 36 ore (i loro aggiornamenti non possono essere registrati).
+* Scheda del sito: "Ultimi cambiamenti" sempre visibile, al posto dello storico nascosto in fondo alla pagina.
+* Report clienti: numero di aggiornamenti registrati per sito nel mese scelto e scorciatoie "Mese scorso" / "Mese in corso"; l'editor del resoconto indica quanti aggiornamenti ci sono e rimanda allo Storico.
+* Bozze automatiche: il primo del mese (entro il 7) Sentinel prepara le bozze dei resoconti del mese precedente per tutti i siti e avvisa via email e canali di notifica (nuovo evento "Bozze dei resoconti pronte") quando sono pronte. Pulsante "Prepara tutte le bozze" in Report clienti. Le bozze gia' scritte non vengono mai sovrascritte; nessun invio senza approvazione. Disattivabile in Impostazioni → Intelligenza artificiale.
+* Falle chiuse "gia' segnalate" o "emerse dopo": Sentinel registra quando vede per la prima volta ogni vulnerabilita' e lo confronta con la data dell'aggiornamento. Per le falle gia' in archivio prima di questa versione la data resta sconosciuta e il resoconto dice solo che l'aggiornamento chiudeva falle note.
+* Aggiornamenti automatici: con il Client 1.8 lo Storico e i resoconti distinguono gli aggiornamenti applicati da WordPress in automatico (badge "automatico") da quelli fatti dall'agenzia.
+* Changelog ufficiali dei plugin della libreria WordPress.org (in archivio 3 giorni): l'IA puo' citare una o due novita' utili al cliente. Per i premium resta "aggiornamento ordinario".
+* Spiegazioni fisse sui componenti (Report clienti → resoconto, passaggio 1): per ogni plugin o tema una nota per il cliente, valida per tutti i mesi e, se si vuole, per tutti i siti con lo stesso componente. Compare nella nuova sezione "Situazione di alcuni componenti" del report mensile e viene usata dall'IA.
+* Il report per il cliente non contiene piu' i "Prossimi passi consigliati": il lavoro lo fa l'agenzia. Anche l'IA ha l'istruzione di descrivere la situazione senza dare consigli al cliente.
+* Raggiungibilita' piu' prudente: ogni controllo fallito viene ripetuto subito (browser comune, piu' tempo); allarme dopo 3 controlli falliti di fila invece di 2; un sito che risponde con un blocco del firewall (401, 403, 429) conta come online; se in un giro non risponde nessun sito il problema e' la rete del Master e non parte nessun allarme.
+* "Offline" / "Non collegato" rinominato "Client senza dati": indica che il plugin Client non invia inventari da 36 ore, non che il sito sia spento. L'avviso dice se il sito risponde comunque ai controlli e dove guardare.
+* Plurali corretti nel report mensile ("1 componente", "1 aggiornamento") e durate senza "0 min".
+* Lo schema del database si aggiorna anche fuori dall'amministrazione (cron, REST, WP-CLI), cosi' le nuove colonne esistono sempre dopo un aggiornamento via zip.
 
 == 1.9.0 - 24 October 2026 ==
 * Resoconti per i clienti scritti con l'IA (Report clienti → Prepara il resoconto): note dell'agenzia, bozza scritta dall'IA, rilettura e approvazione, anteprima e invio. Il resoconto approvato apre il report mensile e l'email al cliente; le bozze non approvate non escono mai.

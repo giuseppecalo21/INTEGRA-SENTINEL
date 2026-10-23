@@ -16,6 +16,7 @@ final class Integra_Sentinel_Admin {
             'integra-sentinel-fleet' => 'Plugin e temi',
             'integra-sentinel-licenses' => 'Licenze',
             'integra-sentinel-tasks' => 'Interventi',
+            'integra-sentinel-history' => 'Storico',
             'integra-sentinel-reports' => 'Report clienti',
             'integra-sentinel-settings' => 'Impostazioni',
         );
@@ -81,6 +82,11 @@ final class Integra_Sentinel_Admin {
             'draft_ai' => array('Bozza scritta dall’IA: rileggila, correggila se serve e approvala prima di inviarla.', 'success'),
             'draft_ai_fail' => array('L’IA non ha prodotto la bozza: vedi il messaggio sopra il testo.', 'error'),
             'draft_saved' => array('Resoconto salvato.', 'success'),
+            'drafts_queued' => array('Bozze in preparazione: l’IA le scrive in sottofondo, un paio alla volta. Riceverai un avviso quando sono pronte.', 'success'),
+            'drafts_none' => array('Nessuna bozza da preparare: tutti i siti con un inventario hanno già un resoconto per questo mese (o l’IA non è configurata).', 'warning'),
+            'drafts_cancelled' => array('Preparazione delle bozze interrotta. Le bozze già scritte restano.', 'success'),
+            'component_notes' => array('Spiegazioni salvate: compariranno nei report di questo sito.', 'success'),
+            'event_note' => array('Motivo salvato: verrà usato nel resoconto per il cliente.', 'success'),
             'draft_approved' => array('Resoconto approvato: ora compare nel report mensile e nell’email al cliente.', 'success'),
             'daily' => array('Andamenti, promemoria e interventi ricalcolati.', 'success'),
             'intel' => array('Dati da WordPress.org ed Envato aggiornati (a lotti: ripeti se il parco è grande).', 'success'),
@@ -135,6 +141,7 @@ final class Integra_Sentinel_Admin {
             case 'integra-sentinel-fleet': self::page_fleet(); break;
             case 'integra-sentinel-licenses': Integra_Sentinel_Admin_Pages::licenses(); break;
             case 'integra-sentinel-tasks': Integra_Sentinel_Admin_Pages::tasks(); break;
+            case 'integra-sentinel-history': Integra_Sentinel_Admin_Pages::history(); break;
             case 'integra-sentinel-reports': Integra_Sentinel_Admin_Pages::reports(); break;
             case 'integra-sentinel-settings': Integra_Sentinel_Admin_Pages::settings(); break;
         }
@@ -483,7 +490,7 @@ final class Integra_Sentinel_Admin {
         $page = isset($_POST['_sn_return']) ? sanitize_key(wp_unslash($_POST['_sn_return'])) : 'integra-sentinel';
         if (!isset(self::pages()[$page])) { $page = 'integra-sentinel'; }
         $args = array('sentinel_msg' => $msg);
-        foreach (array('_sn_site' => 'site', '_sn_product' => 'product', '_sn_view' => 'view', '_sn_ym' => 'ym') as $field => $arg) {
+        foreach (array('_sn_site' => 'site', '_sn_product' => 'product', '_sn_view' => 'view', '_sn_ym' => 'ym', '_sn_type' => 'type') as $field => $arg) {
             if (!empty($_POST[$field])) { $args[$arg] = sanitize_text_field(wp_unslash($_POST[$field])); }
         }
         $anchor = isset($_POST['_sn_anchor']) ? sanitize_html_class(wp_unslash($_POST['_sn_anchor'])) : '';
@@ -652,9 +659,33 @@ final class Integra_Sentinel_Admin {
                     Integra_Sentinel_Store::draft_save($site_id, $ym, array('status' => 'sent', 'sent_to' => $to));
                 }
                 self::back($ok ? 'report_sent' : 'report_fail');
+            case 'drafts_all':
+                $n = Integra_Sentinel_Reports::enqueue_drafts(sanitize_text_field(self::post('ym')), 'manual');
+                if ($n) { spawn_cron(); }
+                self::back($n ? 'drafts_queued' : 'drafts_none');
+            case 'drafts_cancel':
+                delete_option(Integra_Sentinel_Reports::QUEUE);
+                wp_clear_scheduled_hook(Integra_Sentinel_Reports::HOOK_QUEUE);
+                Integra_Sentinel_Store::log('drafts_queue', 'interrotta');
+                self::back('drafts_cancelled');
+            case 'component_notes':
+                if (!isset($sites[$site_id])) { self::back('invalid'); }
+                $rows = array();
+                foreach ((array) self::post('cnotes', array()) as $key => $row) {
+                    $rows[sanitize_text_field((string) $key)] = array('text' => (string) ($row['text'] ?? ''), 'fleet' => !empty($row['fleet']));
+                }
+                $ok = Integra_Sentinel_Reports::save_component_notes($site_id, $rows);
+                if ($ok) { Integra_Sentinel_Store::log('component_notes', 'spiegazioni sui componenti salvate', $site_id); }
+                self::back($ok ? 'component_notes' : 'busy');
+            case 'event_note':
+                $event = Integra_Sentinel_Store::event_get(absint(self::post('id')));
+                if (!$event) { self::back('invalid'); }
+                $ok = Integra_Sentinel_Store::event_note((int) $event['id'], (string) self::post('note'));
+                if ($ok) { Integra_Sentinel_Store::log('event_note', $event['message'], $event['site_id']); }
+                self::back($ok ? 'event_note' : 'invalid');
             case 'ai_settings':
                 $ok = Integra_Sentinel_AI::save(array('provider' => self::post('provider'), 'model' => self::post('model'), 'base_url' => self::post('base_url'),
-                    'key' => self::post('ai_key'), 'register' => self::post('register'), 'style' => self::post('style')));
+                    'key' => self::post('ai_key'), 'register' => self::post('register'), 'style' => self::post('style'), 'auto_drafts' => self::post('auto_drafts')));
                 Integra_Sentinel_Store::log('ai_settings', $ok ? 'salvate' : 'non valide');
                 self::back($ok ? 'ai_saved' : 'invalid');
             case 'ai_test':

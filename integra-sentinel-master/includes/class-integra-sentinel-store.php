@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) { exit; }
 
 final class Integra_Sentinel_Store {
 
-    const DB_VERSION = '2';
+    const DB_VERSION = '4';
     const DB_OPTION  = 'integra_sentinel_db_version';
     const RETENTION  = array('events' => 730, 'probes' => 120, 'audit' => 400, 'metrics' => 420);
 
@@ -40,6 +40,8 @@ final class Integra_Sentinel_Store {
   at int(10) unsigned NOT NULL DEFAULT 0,
   type varchar(20) NOT NULL DEFAULT '',
   message text NOT NULL,
+  note text NULL,
+  flags varchar(40) NOT NULL DEFAULT '',
   PRIMARY KEY  (id),
   KEY site_at (site_id,at),
   KEY at (at)
@@ -159,7 +161,8 @@ final class Integra_Sentinel_Store {
                 'at' => (int) ($row['at'] ?? time()),
                 'type' => substr((string) ($row['type'] ?? 'note'), 0, 20),
                 'message' => function_exists('mb_substr') ? mb_substr((string) ($row['message'] ?? ''), 0, 500) : substr((string) ($row['message'] ?? ''), 0, 500),
-            ), array('%s', '%d', '%s', '%s'));
+                'flags' => substr(sanitize_key((string) ($row['flags'] ?? '')), 0, 40),
+            ), array('%s', '%d', '%s', '%s', '%s'));
         }
     }
 
@@ -169,8 +172,46 @@ final class Integra_Sentinel_Store {
         $where = $wpdb->prepare('site_id = %s AND at >= %d', (string) $site_id, (int) $since);
         if ($until) { $where .= $wpdb->prepare(' AND at < %d', (int) $until); }
         if ($type !== '') { $where .= $wpdb->prepare(' AND type = %s', $type); }
-        $rows = $wpdb->get_results("SELECT at, type, message FROM {$table} WHERE {$where} ORDER BY at DESC, id DESC LIMIT " . max(1, min(2000, (int) $limit)), ARRAY_A);
+        $rows = $wpdb->get_results("SELECT id, at, type, message, note, flags FROM {$table} WHERE {$where} ORDER BY at DESC, id DESC LIMIT " . max(1, min(2000, (int) $limit)), ARRAY_A);
         return is_array($rows) ? $rows : array();
+    }
+
+    /**
+     * Storico di tutto il parco in un periodo (pagina Storico).
+     * @param array $types tipi di evento ammessi (vuoto = tutti)
+     */
+    public static function events_between($since, $until, $site_id = '', $types = array(), $limit = 1000) {
+        global $wpdb;
+        $table = self::table('events');
+        $where = $wpdb->prepare('at >= %d AND at < %d', (int) $since, (int) $until);
+        if ($site_id !== '') { $where .= $wpdb->prepare(' AND site_id = %s', (string) $site_id); }
+        if ($types) { $where .= " AND type IN ('" . implode("','", array_map('esc_sql', array_map('sanitize_key', $types))) . "')"; }
+        $rows = $wpdb->get_results("SELECT id, site_id, at, type, message, note, flags FROM {$table} WHERE {$where} ORDER BY at DESC, id DESC LIMIT " . max(1, min(5000, (int) $limit)), ARRAY_A);
+        return is_array($rows) ? $rows : array();
+    }
+
+    /** Numero di aggiornamenti registrati per sito in un periodo: site_id => n. */
+    public static function update_counts($since, $until) {
+        global $wpdb;
+        $table = self::table('events');
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT site_id, COUNT(*) AS n FROM {$table} WHERE at >= %d AND at < %d AND type IN ('update','core') GROUP BY site_id", (int) $since, (int) $until), ARRAY_A);
+        $out = array();
+        foreach ((array) $rows as $r) { $out[$r['site_id']] = (int) $r['n']; }
+        return $out;
+    }
+
+    /** Motivo scritto dall'agenzia per un cambiamento (finisce nel resoconto per il cliente). */
+    public static function event_note($id, $note) {
+        global $wpdb;
+        $note = substr(sanitize_textarea_field((string) $note), 0, 1000);
+        return false !== $wpdb->update(self::table('events'), array('note' => $note), array('id' => absint($id)), array('%s'), array('%d'));
+    }
+
+    public static function event_get($id) {
+        global $wpdb;
+        $table = self::table('events');
+        $row = $wpdb->get_row($wpdb->prepare("SELECT id, site_id, at, type, message, note, flags FROM {$table} WHERE id = %d", absint($id)), ARRAY_A);
+        return is_array($row) ? $row : null;
     }
 
     /** Eventi recenti di tutto il parco (es. plugin installati di recente). */
