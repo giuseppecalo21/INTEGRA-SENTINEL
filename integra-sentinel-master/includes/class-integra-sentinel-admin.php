@@ -213,6 +213,26 @@ final class Integra_Sentinel_Admin {
         echo '</section>';
     }
 
+    /** Panoramica: un solo elenco con le cose piu' urgenti di tutto il parco, qualunque sia la causa. */
+    public static function urgent_list($fleet, $limit = 5) {
+        $total = (int) $fleet['groups'];
+        $owners = Integra_Sentinel_Fleet::owners();
+        echo '<section class="sn-panel sn-center"><div class="sn-section-head"><div><h3>Cosa sistemare per primo</h3><p>Ciò che impedisce di aggiornare i siti, dal più urgente. Una riga è un’azione, anche quando riguarda più siti.</p></div>';
+        if ($total) { echo '<a class="button" href="' . esc_url(self::url('integra-sentinel-bottlenecks')) . '">' . ($total > $limit ? 'Vedi tutti (' . $total . ') →' : 'Gestisci →') . '</a>'; }
+        echo '</div>';
+        if (!$total) {
+            echo '<div class="sn-all-clear"><span aria-hidden="true">✓</span><p><strong>Niente da sistemare</strong>Nei dati disponibili nessun aggiornamento è bloccato da licenze, plugin, server o versioni.</p></div></section>';
+            return;
+        }
+        foreach (Integra_Sentinel_Fleet::top_groups($fleet, $limit) as $g) { self::group_row($g, true); }
+        if ($fleet['owners']) {
+            $parts = array();
+            foreach ($owners as $key => $label) { if (!empty($fleet['owners'][$key])) { $parts[] = $label . ' ' . (int) $fleet['owners'][$key]; } }
+            echo '<p class="sn-hint">Chi deve agire: ' . self::e(implode(' · ', $parts)) . '.</p>';
+        }
+        echo '</section>';
+    }
+
     public static function site_anchor_url($site_id, $item) {
         $node = (string) ($item['node'] ?? '');
         $anchor = ($node !== '' && strpos($node, 'env:') !== 0) ? 'sn-plugin-' . sanitize_html_class($node) : 'sn-bottlenecks';

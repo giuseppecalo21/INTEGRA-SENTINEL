@@ -561,7 +561,11 @@
     });
   });
 
+  // La mappa vive nei "Dettagli tecnici", chiusi all'apertura della scheda: si adatta quando vengono aperti.
+  var techPanel = stage.closest('details');
+  if (techPanel) techPanel.addEventListener('toggle', function () { if (techPanel.open) fit(); });
   function focusNode(id, scroll) {
+    if (techPanel && !techPanel.open) { techPanel.open = true; fit(); }
     if (!byId[id]) return;
     showTab('graph', false);
     if (!rendered[id]) {
