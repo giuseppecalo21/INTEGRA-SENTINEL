@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) { exit; }
 
 final class Integra_Sentinel_Store {
 
-    const DB_VERSION = '1';
+    const DB_VERSION = '2';
     const DB_OPTION  = 'integra_sentinel_db_version';
     const RETENTION  = array('events' => 730, 'probes' => 120, 'audit' => 400, 'metrics' => 420);
 
@@ -33,7 +33,7 @@ final class Integra_Sentinel_Store {
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         $charset = $wpdb->get_charset_collate();
         $t = array();
-        foreach (array('events', 'tasks', 'audit', 'probes', 'metrics') as $name) { $t[$name] = self::table($name); }
+        foreach (array('events', 'tasks', 'audit', 'probes', 'metrics', 'drafts') as $name) { $t[$name] = self::table($name); }
         dbDelta("CREATE TABLE {$t['events']} (
   id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   site_id varchar(36) NOT NULL DEFAULT '',
@@ -91,6 +91,22 @@ final class Integra_Sentinel_Store {
   site_id varchar(36) NOT NULL DEFAULT '',
   data text NOT NULL,
   PRIMARY KEY  (day,site_id)
+) $charset;");
+        dbDelta("CREATE TABLE {$t['drafts']} (
+  id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  site_id varchar(36) NOT NULL DEFAULT '',
+  ym char(7) NOT NULL DEFAULT '',
+  status varchar(20) NOT NULL DEFAULT 'draft',
+  body text NOT NULL,
+  notes text NOT NULL,
+  model varchar(120) NOT NULL DEFAULT '',
+  created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+  created_at int(10) unsigned NOT NULL DEFAULT 0,
+  updated_at int(10) unsigned NOT NULL DEFAULT 0,
+  sent_at int(10) unsigned NOT NULL DEFAULT 0,
+  sent_to varchar(190) NOT NULL DEFAULT '',
+  PRIMARY KEY  (id),
+  UNIQUE KEY site_ym (site_id,ym)
 ) $charset;");
         if (self::migrate_history()) {
             update_option(self::DB_OPTION, self::DB_VERSION, false);
@@ -283,6 +299,47 @@ final class Integra_Sentinel_Store {
         return $out;
     }
 
+    /* ---------- Resoconti per i clienti (bozze scritte con l'IA o a mano, una per sito e mese) ---------- */
+
+    public static function draft_statuses() {
+        return array('draft' => 'Bozza da rileggere', 'approved' => 'Approvato', 'sent' => 'Inviato');
+    }
+
+    public static function draft_get($site_id, $ym) {
+        global $wpdb;
+        $table = self::table('drafts');
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE site_id = %s AND ym = %s", (string) $site_id, (string) $ym), ARRAY_A);
+        return is_array($row) ? $row : null;
+    }
+
+    /** Bozze di un mese per tutti i siti: site_id => riga. */
+    public static function drafts_for_month($ym) {
+        global $wpdb;
+        $table = self::table('drafts');
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$table} WHERE ym = %s", (string) $ym), ARRAY_A);
+        $out = array();
+        foreach ((array) $rows as $row) { $out[$row['site_id']] = $row; }
+        return $out;
+    }
+
+    /** Crea o aggiorna la bozza del mese; i campi assenti restano invariati. */
+    public static function draft_save($site_id, $ym, $fields) {
+        global $wpdb;
+        if (!preg_match('/^\d{4}-\d{2}$/', (string) $ym) || $site_id === '') { return false; }
+        $row = array('updated_at' => time());
+        if (array_key_exists('body', $fields)) { $row['body'] = substr(sanitize_textarea_field((string) $fields['body']), 0, 20000); }
+        if (array_key_exists('notes', $fields)) { $row['notes'] = substr(sanitize_textarea_field((string) $fields['notes']), 0, 4000); }
+        if (isset($fields['status']) && isset(self::draft_statuses()[$fields['status']])) { $row['status'] = $fields['status']; }
+        if (array_key_exists('model', $fields)) { $row['model'] = substr(sanitize_text_field((string) $fields['model']), 0, 120); }
+        if (!empty($fields['sent_to'])) { $row['sent_to'] = substr(sanitize_email((string) $fields['sent_to']), 0, 190); $row['sent_at'] = time(); }
+        $formats = function($r) { $f = array(); foreach (array_keys($r) as $k) { $f[] = in_array($k, array('created_by', 'created_at', 'updated_at', 'sent_at'), true) ? '%d' : '%s'; } return $f; };
+        $old = self::draft_get($site_id, $ym);
+        if ($old) { return false !== $wpdb->update(self::table('drafts'), $row, array('id' => (int) $old['id']), $formats($row), array('%d')); }
+        $row += array('site_id' => substr((string) $site_id, 0, 36), 'ym' => $ym, 'status' => 'draft', 'body' => '', 'notes' => '', 'model' => '',
+            'created_by' => get_current_user_id(), 'created_at' => time());
+        return (bool) $wpdb->insert(self::table('drafts'), $row, $formats($row));
+    }
+
     /* ---------- Sonde uptime ---------- */
 
     public static function add_probes($rows) {
@@ -351,7 +408,7 @@ final class Integra_Sentinel_Store {
     /** Rimozione di un sito: elimina i dati collegati nelle tabelle. */
     public static function forget_site($site_id) {
         global $wpdb;
-        foreach (array('events', 'probes', 'metrics') as $name) {
+        foreach (array('events', 'probes', 'metrics', 'drafts') as $name) {
             $wpdb->delete(self::table($name), array('site_id' => (string) $site_id), array('%s'));
         }
     }

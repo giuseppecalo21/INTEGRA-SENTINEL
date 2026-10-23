@@ -3,7 +3,7 @@
  * Plugin Name: Integra Sentinel Master
  * Plugin URI: https://integracorporate.it/
  * Description: Centrale privata in sola lettura per aggiornamenti, colli di bottiglia, licenze, dipendenze, vulnerabilita CVE e integrita anti-intrusione dei siti WordPress gestiti da Integra.
- * Version: 1.8.0
+ * Version: 1.9.0
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: Integra
@@ -27,13 +27,14 @@ require_once __DIR__ . '/includes/class-integra-sentinel-fleet.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-notify.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-probe.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-jobs.php';
+require_once __DIR__ . '/includes/class-integra-sentinel-ai.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-reports.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-admin.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-admin-pages.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-cli.php';
 
 final class Integra_Sentinel_Master {
-    const VERSION = '1.8.0';
+    const VERSION = '1.9.0';
     const SITES = 'integra_sentinel_master_sites';
     const FEEDS = 'integra_sentinel_master_feeds';
     const MAIL = 'integra_sentinel_master_email';
@@ -1155,6 +1156,29 @@ final class Integra_Sentinel_Master {
                 'closed' => !empty($v['operator']['closed']) && $v['operator']['closed'] !== '0');
         }
         return array('status' => $uncertain ? 'review' : 'ok', 'findings' => $findings, 'uncertain' => $uncertain);
+    }
+
+    /**
+     * Vulnerabilita' note che colpivano la versione $from e non colpiscono $to, secondo l'archivio dei feed.
+     * null se il feed del componente non e' disponibile (motivo sconosciuto, da non dedurre).
+     */
+    public static function advisories_fixed($type, $slug, $from, $to) {
+        $cache = (array) get_option(self::FEEDS, array());
+        if ($type === 'core') {
+            $before = self::advisories_for($cache, 'core', (string) $from, (string) $from);
+            $after = self::advisories_for($cache, 'core', (string) $to, (string) $to);
+        } else {
+            $before = self::advisories_for($cache, $type, (string) $slug, (string) $from);
+            $after = self::advisories_for($cache, $type, (string) $slug, (string) $to);
+        }
+        if (!in_array($before['status'], array('ok', 'review'), true)) { return null; }
+        $still = array_column($after['findings'], 'id');
+        $out = array();
+        foreach ($before['findings'] as $f) {
+            if (in_array($f['id'], $still, true)) { continue; }
+            $out[] = array('title' => $f['title'], 'score' => $f['score'], 'tier' => self::sn_tier($f['score']));
+        }
+        return $out;
     }
 
     private static function skip_plugin_lookup($p) {
@@ -2410,7 +2434,7 @@ final class Integra_Sentinel_Master {
         if ($analysis && !empty($analysis['bottlenecks'])) {
             $top = $analysis['bottlenecks'][0];
             if (in_array($top['severity'], array('critical', 'high'), true)) {
-                $problems[] = (!empty($top['security']) ? 'Patch di sicurezza bloccata: ' : 'Collo di bottiglia: ') . $top['title'];
+                $problems[] = (!empty($top['security']) ? 'Patch di sicurezza bloccata: ' : 'Blocca gli aggiornamenti: ') . $top['title'];
             }
         }
         if (!empty($site['uses_prev_secret'])) {
@@ -2468,7 +2492,7 @@ final class Integra_Sentinel_Master {
             'token'=>'Token WPScan non valido.', 'test_sent'=>'Report di prova accettato dal sistema email. Controlla la casella e lo spam.', 'test_failed'=>'Report non inviato: controlla indirizzi, wp_mail e configurazione SMTP.',
             'busy'=>'Database temporaneamente occupato: nessuna modifica effettuata, riprova.', 'deps'=>'Regole delle dipendenze e catalogo premium salvati.', 'denied'=>'Operazione riservata agli amministratori.');
         $msg = isset($_GET['sentinel_msg']) ? sanitize_key(wp_unslash($_GET['sentinel_msg'])) : '';
-        if (isset($messages[$msg]) && !isset(Integra_Sentinel_Admin::messages()[$msg])) { echo '<div class="notice notice-info"><p>' . self::e($messages[$msg]) . '</p></div>'; }
+        if (isset($messages[$msg]) && !isset(Integra_Sentinel_Admin::messages()[$msg])) { echo '<div class="notice inline notice-info"><p>' . self::e($messages[$msg]) . '</p></div>'; }
         if ($once) {
             echo '<section class="sn-panel sn-secret"><h2>Credenziali da copiare adesso</h2><p>Questi dati saranno visibili una sola volta. Incollali nelle impostazioni del Client, oppure usa un codice di abbinamento dalla scheda del sito (Gestione sito).</p>';
             foreach (array('URL Master'=>untrailingslashit(home_url('/')),'ID sito'=>$once['id'],'Chiave segreta'=>$once['secret']) as $label => $value) {
@@ -2521,37 +2545,28 @@ final class Integra_Sentinel_Master {
             }
         }
         echo '<div class="sn-stats">';
-        self::sn_stat(count($sites), 'Siti monitorati', ($states['offline'] . ' senza collegamento'), 'brand');
-        self::sn_stat($with_findings, 'Siti con criticità', $affected . ' componenti CVE · ' . $integrity_sum . ' anomalie integrità', 'danger');
-        self::sn_stat($alerts, 'Advisory applicabili', 'Non equivale al numero di plugin', 'warn');
+        self::sn_stat(count($sites), 'Siti monitorati', $states['offline'] ? $states['offline'] . ' non collegati' : 'tutti collegati', 'brand');
+        self::sn_stat($with_findings, 'Siti con problemi di sicurezza', $affected . ' componenti vulnerabili · ' . $integrity_sum . ' anomalie sui file', $with_findings ? 'danger' : 'clear');
+        self::sn_stat((int) $fleet['kpi']['ready'], 'Aggiornamenti pronti', 'si possono applicare subito, senza blocchi', 'ok');
         self::sn_stat($open_tasks, 'Interventi aperti', (int) ($task_counts['client'] ?? 0) . ' in attesa del cliente', 'neutral');
         echo '</div>';
-        echo '<h3 class="sn-band-title">Aggiornamenti del parco</h3>';
-        Integra_Sentinel_Admin::readiness($fleet);
-        Integra_Sentinel_Admin::bottleneck_center($fleet, true);
-        $mailcfg = self::mail_config(); $nextmail = wp_next_scheduled(self::HOOK_DIGEST);
-        echo '<div class="sn-mail-banner"><span class="sn-mail-symbol" aria-hidden="true">✉</span><div><strong>Report email automatico</strong><span>' . (!empty($mailcfg['daily']) ? 'Attivo · prossimo invio previsto ' . ($nextmail ? self::e(wp_date('d/m/Y H:i', $nextmail)) : 'da programmare') : 'Disattivato') . ' · Alert ' . (!empty($mailcfg['alerts']) ? 'attivi' : 'disattivati') . (Integra_Sentinel_Notify::configured() ? ' · Slack/Telegram/Make collegati' : '') . '</span></div><a href="' . esc_url(admin_url('admin.php?page=integra-sentinel-settings#sn-mail')) . '">Gestisci notifiche &rarr;</a></div>';
-        echo '<div class="sn-main-grid"><section class="sn-panel"><div class="sn-section-head"><div><h3>Distribuzione dei siti</h3><p>Stato operativo corrente, inclusa telemetria anti-intrusione.</p></div></div>';
-        self::sn_chart($states, count($sites), array('critical'=>'Critici','risk'=>'Con vulnerabilità','review'=>'Da verificare','clear'=>'Senza vulnerabilità note','offline'=>'Non collegati'));
-        echo '<div class="sn-insight">';
-        if ($with_findings) { echo '<span class="sn-insight-icon">!</span><span><b>' . $with_findings . ' siti richiedono interventi.</b> Apri prima quelli con anomalie di integrità o componenti critici.</span>'; }
-        elseif ($sites) { echo '<span class="sn-insight-icon">i</span><span>Non risultano vulnerabilità o intrusioni nei dati disponibili. Controlla comunque copertura e aggiornamento delle scansioni.</span>'; }
-        else { echo '<span class="sn-insight-icon">i</span><span>Registra il primo sito per iniziare.</span>'; }
-        echo '</div></section>';
-        echo '<section class="sn-panel"><div class="sn-section-head"><div><h3>Componenti da tenere d’occhio</h3><p>Plugin, temi e WordPress vulnerabili raggruppati tra tutti i siti.</p></div><a class="sn-linkbtn" href="' . esc_url(admin_url('admin.php?page=integra-sentinel-fleet')) . '">Tutti i prodotti →</a></div>';
-        if (!$hotspots) { echo '<p class="sn-muted">Non ci sono ancora componenti vulnerabili identificati.</p>'; }
+        Integra_Sentinel_Admin::urgent_list($fleet);
+        echo '<div class="sn-main-grid">';
+        echo '<section class="sn-panel"><div class="sn-section-head"><div><h3>Componenti vulnerabili</h3><p>Plugin, temi e WordPress con vulnerabilità note, raggruppati tra tutti i siti.</p></div><a class="sn-linkbtn" href="' . esc_url(admin_url('admin.php?page=integra-sentinel-fleet')) . '">Tutti i prodotti →</a></div>';
+        if (!$hotspots) { echo '<p class="sn-muted">Nessun componente con vulnerabilità note nei dati disponibili.</p>'; }
         $shown = 0;
         foreach ($hotspots as $hkey => $h) {
             if ($shown++ >= 5) { break; }
             $product = strpos($hkey, 'core:') === 0 ? '' : $hkey;
-            echo '<div class="sn-hotspot"><span class="sn-hotspot-dot sn-fill-' . esc_attr($h['tier']) . '"></span><div><b>' . ($product !== '' ? '<a href="' . esc_url(admin_url('admin.php?page=integra-sentinel-fleet&product=' . rawurlencode($product))) . '">' . self::e($h['name']) . '</a>' : self::e($h['name'])) . '</b><small>' . count($h['sites']) . ' siti interessati · ' . $h['count'] . ' advisory</small></div>' . self::sn_badge(self::sn_severity($h['tier']), $h['tier']) . '</div>';
+            echo '<div class="sn-hotspot"><span class="sn-hotspot-dot sn-fill-' . esc_attr($h['tier']) . '"></span><div><b>' . ($product !== '' ? '<a href="' . esc_url(admin_url('admin.php?page=integra-sentinel-fleet&product=' . rawurlencode($product))) . '">' . self::e($h['name']) . '</a>' : self::e($h['name'])) . '</b><small>' . count($h['sites']) . ' ' . (count($h['sites']) === 1 ? 'sito' : 'siti') . ' · ' . $h['count'] . ' ' . ($h['count'] === 1 ? 'segnalazione' : 'segnalazioni') . '</small></div>' . self::sn_badge(self::sn_severity($h['tier']), $h['tier']) . '</div>';
         }
-        echo '</section></div>';
+        echo '</section>';
         Integra_Sentinel_Admin::trends($fleet);
+        echo '</div>';
         echo '<section class="sn-section" id="sn-sites"><div class="sn-section-head"><div><h3>I tuoi siti</h3><p>Ordinati per priorità. Clicca su un sito per vedere cosa sistemare.</p></div><span class="sn-counter">' . count($sites) . ' totali</span></div>';
         if ($sites) {
             echo '<div class="sn-plugin-tools"><label class="sn-search"><span aria-hidden="true">⌕</span><input type="search" data-sn-site-search placeholder="Cerca un sito…" aria-label="Cerca un sito"></label><div class="sn-filters" aria-label="Filtra siti">';
-            foreach (array('all' => 'Tutti', 'critical' => 'Critici', 'risk' => 'Con vulnerabilità', 'review' => 'Da verificare', 'blocked' => 'Con colli di bottiglia', 'offline' => 'Non collegati') as $key => $label) {
+            foreach (array('all' => 'Tutti', 'fix' => 'Da sistemare', 'review' => 'Da verificare', 'offline' => 'Non collegati') as $key => $label) {
                 echo '<button type="button" class="sn-filter' . ($key === 'all' ? ' is-selected' : '') . '" data-sn-site-filter="' . esc_attr($key) . '" aria-pressed="' . ($key === 'all' ? 'true' : 'false') . '">' . self::e($label) . '</button>';
             }
             echo '</div>';
@@ -2571,18 +2586,10 @@ final class Integra_Sentinel_Master {
             $issues = self::sn_site_issues($site, $m, $analysis);
             $coverage = $m['coverage']; $cov_text = $coverage['total'] ? $coverage['ok'] . '/' . $coverage['total'] : '—';
             $meta = (array) ($site['meta'] ?? array());
-            $filters = $m['state'] . ($s && $s['bottlenecks'] ? ' blocked' : '');
+            $filters = $m['state'] . ((in_array($m['state'], array('critical', 'risk'), true) || ($s && $s['bottlenecks'])) ? ' fix' : '');
             echo '<a class="sn-site-card sn-accent-' . esc_attr($m['state']) . '" href="' . esc_url(self::sn_admin_url($id)) . '" data-sn-state="' . esc_attr($filters) . '" data-sn-tags="' . esc_attr(implode(' ', (array) ($meta['tags'] ?? array()))) . '" data-sn-name="' . esc_attr(strtolower($site['label'] . ' ' . $site['url'])) . '">';
             echo '<div class="sn-site-head"><div><h4>' . self::e($site['label']) . '</h4><span class="sn-domain">' . self::e($site['url']) . '</span></div>' . self::sn_badge(self::sn_state_label($m['state']), $m['state']) . '</div>';
-            echo '<div class="sn-site-numbers"><div><strong>' . ($m['affected'] + $m['integrity_count']) . '</strong><span>rischi / integrità</span></div><div><strong>' . ($s ? (int) $s['ready'] : $m['updates']) . '</strong><span>' . ($s ? 'aggiornabili subito' : 'aggiornamenti') . '</span></div><div><strong>' . ($s ? (int) $s['bottlenecks'] : 0) . '</strong><span>colli di bottiglia</span></div></div>';
-            if ($s && ($s['license'] || $s['manual'] || $s['blind'] || $s['blocked'])) {
-                echo '<div class="sn-site-chips">';
-                if ($s['blocked']) { echo self::sn_badge($s['blocked'] . ' bloccati', 'danger'); }
-                if ($s['license']) { echo self::sn_badge($s['license'] . ' licenze', 'premium'); }
-                if ($s['manual']) { echo self::sn_badge($s['manual'] . ' manuali', 'premium'); }
-                if ($s['blind']) { echo self::sn_badge($s['blind'] . ' ciechi', 'muted'); }
-                echo '</div>';
-            }
+            echo '<div class="sn-site-numbers"><div><strong>' . ($m['affected'] + $m['integrity_count']) . '</strong><span>problemi di sicurezza</span></div><div><strong>' . ($s ? (int) $s['ready'] : $m['updates']) . '</strong><span>' . ($s ? 'aggiornamenti pronti' : 'aggiornamenti') . '</span></div><div><strong>' . ($s ? (int) $s['bottlenecks'] : 0) . '</strong><span>cose che bloccano</span></div></div>';
             if ($issues) { echo '<p class="sn-site-issue">' . self::e($issues[0]) . '</p>'; }
             else { echo '<p class="sn-site-issue sn-site-issue-muted">Nessun problema aggiuntivo prioritario rilevato.</p>'; }
             $ssl_tag = isset($site['ssl_days_left']) && is_int($site['ssl_days_left']) ? ' · SSL ' . $site['ssl_days_left'] . 'gg' : '';
@@ -2823,9 +2830,9 @@ final class Integra_Sentinel_Master {
         $kinds = Integra_Sentinel_Fleet::kinds();
         $owners = Integra_Sentinel_Fleet::owners();
         $center = admin_url('admin.php?page=integra-sentinel-bottlenecks');
-        echo '<section class="sn-panel sn-bottlenecks" id="sn-bottlenecks"><div class="sn-section-head"><div><h3>Colli di bottiglia</h3><p>Tutto ciò che impedisce o complica gli aggiornamenti del sito, in ordine di impatto, con chi deve agire.</p></div><span class="sn-counter">' . count($list) . '</span></div>';
+        echo '<section class="sn-panel sn-bottlenecks" id="sn-bottlenecks"><div class="sn-section-head"><div><h3>Cosa blocca gli aggiornamenti</h3><p>In ordine di impatto, con chi deve agire.</p></div><span class="sn-counter">' . count($list) . '</span></div>';
         if (!$list) {
-            echo '<div class="sn-all-clear"><span aria-hidden="true">✓</span><p><strong>Nessun collo di bottiglia</strong>Licenze, addon, server, temi e versioni non bloccano gli aggiornamenti nei dati disponibili.</p></div>';
+            echo '<div class="sn-all-clear"><span aria-hidden="true">✓</span><p><strong>Nessun blocco</strong>Licenze, plugin, server, temi e versioni non bloccano gli aggiornamenti nei dati disponibili.</p></div>';
         }
         $shown = 0;
         foreach ($list as $b) {
@@ -2910,12 +2917,11 @@ final class Integra_Sentinel_Master {
         $graph = $analysis['graph'];
         $gs = $graph['summary'];
         $s = $analysis['summary'];
-        echo '<div class="sn-stats sn-stats-5 sn-detail-stats">';
-        self::sn_stat($m['affected'], 'Componenti vulnerabili', $m['vulnerabilities'] . ' advisory · ' . $m['integrity_count'] . ' anomalie integrità', ($m['affected'] || $m['integrity_count']) ? 'danger' : 'clear');
-        self::sn_stat($s['ready'], 'Aggiornabili subito', $s['blocked'] . ' bloccati · ' . $s['updates'] . ' disponibili' . ($s['quarantined'] ? ' · ' . $s['quarantined'] . ' in quarantena' : ''), 'ok');
-        self::sn_stat($s['bottlenecks'], 'Colli di bottiglia', $s['security'] ? $s['security'] . ' trattengono patch di sicurezza' : 'lavoro stimato ~' . Integra_Sentinel_Admin::minutes_text($s['minutes']), $s['bottlenecks'] ? 'danger' : 'clear');
-        self::sn_stat($gs['premium'], 'Fuori libreria WordPress', $s['license'] . ' licenze · ' . $s['manual'] . ' manuali · ' . $s['blind'] . ' ciechi', 'premium');
-        self::sn_stat($coverage['ok'] . '/' . $coverage['total'], 'Controlli API riusciti', 'PHP ' . ($r['php'] ?: '—') . ' · WordPress ' . $r['wp'], 'brand');
+        echo '<div class="sn-stats sn-detail-stats">';
+        self::sn_stat($m['affected'], 'Componenti vulnerabili', $m['integrity_count'] ? $m['integrity_count'] . ' anomalie sui file' : 'nessuna anomalia sui file', ($m['affected'] || $m['integrity_count']) ? 'danger' : 'clear');
+        self::sn_stat($s['ready'], 'Aggiornamenti pronti', 'su ' . $s['updates'] . ' disponibili' . ($s['blocked'] ? ', ' . $s['blocked'] . ' bloccati' : ''), 'ok');
+        self::sn_stat($s['bottlenecks'], 'Cose che bloccano', $s['bottlenecks'] ? 'lavoro stimato ~' . Integra_Sentinel_Admin::minutes_text($s['minutes']) : 'nessun blocco', $s['bottlenecks'] ? 'danger' : 'clear');
+        self::sn_stat('WP ' . ($r['wp'] ?: '—'), 'PHP ' . ($r['php'] ?: '—'), !empty($r['core_update']) ? 'disponibile WordPress ' . $r['core_update'] : 'WordPress aggiornato', 'brand');
         echo '</div>';
         $freeze = Integra_Sentinel_Settings::active_freeze((array) ($meta['tags'] ?? array()));
         if ($freeze) { echo '<div class="sn-freeze"><strong>Periodo di blocco: ' . self::e($freeze['label']) . '</strong> · fino al ' . self::e(wp_date('d/m/Y', strtotime($freeze['to'] . ' 12:00:00'))) . '. Solo interventi di sicurezza.</div>'; }
@@ -2933,38 +2939,19 @@ final class Integra_Sentinel_Master {
             echo '</ul><p class="sn-hint" style="margin-top:8px;color:#731c28">Se hai effettuato tu modifiche manuali legittime via FTP a file del tema o wp-config.php, apri Impostazioni → Integra Sentinel sul sito Client e clicca su &ldquo;Approva modifiche file e rigenera Baseline Hash&rdquo;. I file del core diversi dai checksum ufficiali vanno invece reinstallati.</p></div>';
         }
 
-        // Mappa delle dipendenze, colli di bottiglia e origine dei plugin.
-        self::sn_dependency_section($graph);
-        echo '<div class="sn-main-grid sn-deps-grid">';
-        self::sn_bottleneck_panel($analysis);
-        self::sn_origin_panel($graph);
-        echo '</div>';
-        echo '<div class="sn-main-grid">';
-        Integra_Sentinel_Admin_Pages::environment_panel($analysis);
-        Integra_Sentinel_Admin_Pages::themes_panel($analysis);
-        echo '</div>';
-
-        // Griglia di telemetria operativa (SEO, SSL, Hardening/Admin, Errori PHP).
-        $sec = (array) ($r['security'] ?? array());
-        $ssl_days = $site['ssl_days_left'] ?? null;
-        echo '<div class="sn-env-grid">';
-        echo '<div class="sn-env-card"><strong>Indicizzazione SEO</strong>' . (!isset($sec['blog_public']) || $sec['blog_public'] ? self::sn_badge('Indicizzabile (OK)', 'ok') : self::sn_badge('BLOCCATO (noindex)', 'danger')) . '</div>';
-        echo '<div class="sn-env-card"><strong>Certificato SSL</strong>' . ($ssl_days === null ? self::sn_badge('Al prossimo audit', 'muted') : ($ssl_days < 14 ? self::sn_badge('Scade in ' . (int) $ssl_days . 'gg', 'danger') : self::sn_badge('Valido (' . (int) $ssl_days . ' giorni)', 'ok'))) . '</div>';
-        $adm_count = count((array) ($sec['admins'] ?? array()));
-        $fedit = !empty($sec['file_edit_allowed']);
-        echo '<div class="sn-env-card"><strong>Hardening &amp; Admin</strong>' . ($adm_count ? '<b>' . $adm_count . ' admin</b> · ' : '') . ($fedit ? self::sn_badge('Editor PHP attivo', 'warn') : self::sn_badge('DISALLOW_FILE_EDIT', 'ok')) . '</div>';
-        $dlog = (int) ($sec['debug_log_kb'] ?? 0);
-        echo '<div class="sn-env-card"><strong>Log &amp; Fatal Error</strong>' . ($dlog > 0 ? self::sn_badge('debug.log ' . $dlog . ' KB', 'warn') : self::sn_badge('Nessun debug.log', 'ok')) . (!empty($sec['last_fatal']) ? '<div style="font-size:11px;color:#a91f36;margin-top:4px">' . self::e($sec['last_fatal']) . '</div>' : '') . '</div>';
-        echo '</div>';
-
-        $warnings = self::sn_site_issues($site, $m, $analysis);
+        // Prima cosa: le attenzioni e cosa fare (vulnerabilita' e blocchi). Il resto e' nei dettagli tecnici.
+        // Blocchi e piattaforma fuori supporto sono gia' nel pannello accanto: qui solo il resto.
+        $platform = in_array('platform', array_column($analysis['bottlenecks'], 'kind'), true);
+        $warnings = array_values(array_filter(self::sn_site_issues($site, $m, $analysis), function($w) use ($platform) {
+            return strpos($w, 'Blocca gli aggiornamenti: ') !== 0 && strpos($w, 'Patch di sicurezza bloccata: ') !== 0 && !($platform && strpos($w, 'PHP ') === 0);
+        }));
         if ($warnings) {
-            echo '<div class="sn-warning-panel"><h3>Attenzioni operative</h3><ul>';
+            echo '<div class="sn-warning-panel"><h3>Da sapere</h3><ul>';
             foreach ($warnings as $warning) { echo '<li>' . self::e($warning) . '</li>'; }
             echo '</ul></div>';
         }
-        echo '<div class="sn-main-grid sn-detail-summary"><section class="sn-panel"><div class="sn-section-head"><div><h3>Da affrontare prima</h3><p>Componenti ordinati per gravità massima nota, non per numero di righe del database.</p></div></div>';
-        if (!$m['groups']) { echo '<p class="sn-muted">Nessuna vulnerabilità applicabile nei risultati disponibili.</p>'; }
+        echo '<div class="sn-main-grid sn-detail-summary"><section class="sn-panel"><div class="sn-section-head"><div><h3>Vulnerabilità da correggere</h3><p>Dalla più grave. Aggiornando alla versione indicata la falla si chiude.</p></div></div>';
+        if (!$m['groups']) { echo '<div class="sn-all-clear"><span aria-hidden="true">✓</span><p><strong>Nessuna vulnerabilità nota</strong>Nei database consultati nessuna falla riguarda le versioni installate.</p></div>'; }
         $shown = 0;
         foreach ($m['groups'] as $g) {
             if ($shown++ >= 6) { break; }
@@ -2973,37 +2960,17 @@ final class Integra_Sentinel_Master {
             if (!$installed) { foreach ($r['themes'] as $t) { if ($g['type'] === 'theme' && $t['slug'] === $g['slug']) { $installed = $t['version']; $target = $t['update'] ?? ''; break; } } }
             if ($g['type'] === 'core') { $installed = $r['wp']; $target = $r['core_update'] ?? ''; }
             $anchor_id = $g['type'] === 'core' ? 'sn-plugin-core' : 'sn-plugin-' . sanitize_html_class($g['slug']);
-            echo '<a class="sn-priority" href="' . esc_url('#' . $anchor_id) . '"><span class="sn-priority-number">' . $shown . '</span><span class="sn-priority-copy"><strong>' . self::e($g['name']) . '</strong><small>' . self::e($installed) . ($target ? ' → ' . self::e($target) : ' · verificare soluzione') . ' · ' . $g['count'] . ' advisory</small></span>' . self::sn_badge(self::sn_severity($g['max_tier']), $g['max_tier']) . '</a>';
+            echo '<a class="sn-priority" href="' . esc_url('#' . $anchor_id) . '"><span class="sn-priority-number">' . $shown . '</span><span class="sn-priority-copy"><strong>' . self::e($g['name']) . '</strong><small>' . self::e($installed) . ($target ? ' → ' . self::e($target) : ' · nessuna versione correttiva disponibile') . ' · ' . $g['count'] . ' ' . ($g['count'] === 1 ? 'segnalazione' : 'segnalazioni') . '</small></span>' . self::sn_badge(self::sn_severity($g['max_tier']), $g['max_tier']) . '</a>';
         }
-        echo '</section><section class="sn-panel"><div class="sn-section-head"><div><h3>Gravità per componente</h3><p>Ogni componente è contato una volta, in base al suo score più alto.</p></div></div>';
-        self::sn_chart($m['tiers'], $m['affected'], array('critical'=>'Critica','high'=>'Alta','medium'=>'Media','low'=>'Bassa','unknown'=>'Non classificata'));
-        echo '<div class="sn-coverage"><div><strong>Copertura WPVulnerability</strong><span>' . $coverage['ok'] . ' verificati su ' . $coverage['total'] . ' interrogabili</span></div>';
-        echo '<div class="sn-progress"><div style="width:' . esc_attr($coverage['total'] ? number_format($coverage['ok'] / $coverage['total'] * 100, 2, '.', '') : '0') . '%"></div></div>';
-        if ($coverage['bad'] || $coverage['waiting'] || $coverage['stale'] || $coverage['identity_review']) {
-            echo '<p class="sn-hint">' . $coverage['bad'] . ' controlli non riusciti · ' . $coverage['waiting'] . ' in attesa · ' . $coverage['stale'] . ' verifiche oltre 24 ore · ' . $coverage['identity_review'] . ' identità da verificare; ' . $coverage['internal'] . ' componenti interni fuori dai feed esterni.</p>';
-        } else { echo '<p class="sn-hint">Interrogazioni completate per i componenti identificati; ' . $coverage['internal'] . ' componenti interni non inclusi nei feed. Il risultato dipende dalle fonti esterne.</p>'; }
-        echo '</div></section></div>';
-        if (Integra_Sentinel_Settings::can_manage()) {
-            echo '<section class="sn-panel sn-scan"><div><h3>Controllo delle vulnerabilità e SSL</h3><p>Il Master interroga i database di vulnerabilità per WordPress, temi e plugin del sito e verifica il certificato HTTPS. Nessuna azione sul sito.</p></div><div><button type="button" class="button button-primary" id="sn-scan-now" data-site="' . esc_attr($site['id']) . '" data-nonce="' . esc_attr(wp_create_nonce('integra_sentinel_scan_site')) . '">Controlla adesso</button><div id="sn-scan-progress" role="status" aria-live="polite"></div></div></section>';
-        }
-        Integra_Sentinel_Admin_Pages::probe_panel($site);
-        Integra_Sentinel_Admin_Pages::requests_panel($site);
-        $suspected = self::sn_group_findings((array) ($site['possible_findings'] ?? array()));
-        if ($suspected) {
-            echo '<section class="sn-panel"><div class="sn-section-head"><div><h3>Corrispondenze da confermare</h3><p>Advisory associati allo slug di componenti con Update URI esterno non identificati con sufficiente certezza. Non sono conteggiati come vulnerabilità confermate.</p></div></div>';
-            foreach ($suspected as $g) {
-                echo '<details class="sn-nested-details"><summary>' . self::e($g['name']) . ' · ' . (int) $g['count'] . ' advisory potenziali</summary>';
-                self::sn_advisory_rows($g['items']);
-                echo '</details>';
-            }
-            echo '</section>';
-        }
+        echo '</section>';
+        self::sn_bottleneck_panel($analysis);
+        echo '</div>';
         $records = self::sn_plugin_records($site, $cache, $m['groups'], $graph);
         $gnodes = array();
         foreach ($graph['nodes'] as $gn) { $gnodes[$gn['id']] = $gn; }
         echo '<section class="sn-section sn-plugin-section" id="sn-plugins"><div class="sn-section-head"><div><h3>Plugin installati <span class="sn-title-count">' . count($records) . '</span></h3><p>Un plugin per scheda. Apri per vedere le CVE, le dipendenze e i passaggi consigliati.</p></div></div>';
         echo '<div class="sn-plugin-tools"><label class="sn-search"><span aria-hidden="true">⌕</span><input type="search" id="sn-plugin-search" placeholder="Cerca un plugin…" aria-label="Cerca plugin"></label><div class="sn-filters" aria-label="Filtri plugin">';
-        foreach (array('all' => 'Tutti', 'risk' => 'Vulnerabili', 'update' => 'Da aggiornare', 'review' => 'Da verificare', 'bottleneck' => 'Colli di bottiglia', 'license' => 'Licenze', 'premium' => 'Fuori libreria', 'clean' => 'Senza vulnerabilità note') as $key => $label) {
+        foreach (array('all' => 'Tutti', 'fix' => 'Da sistemare', 'update' => 'Da aggiornare', 'premium' => 'Premium (fuori da WordPress.org)') as $key => $label) {
             echo '<button type="button" class="sn-filter' . ($key === 'all' ? ' is-selected' : '') . '" data-sn-filter="' . esc_attr($key) . '" aria-pressed="' . ($key === 'all' ? 'true' : 'false') . '">' . self::e($label) . '</button>';
         }
         echo '</div></div>';
@@ -3014,7 +2981,8 @@ final class Integra_Sentinel_Master {
             $gn = $gnodes[$p['slug']] ?? null;
             $filter = ($risk ? ' risk' : '') . ($update ? ' update' : '') . (($state['state'] !== 'ok' || ($update && $a['class'] !== 'green')) ? ' review' : '') . (!$risk && $state['state'] === 'ok' ? ' clean' : '')
                 . ($gn && in_array($gn['status'], array('bottleneck', 'blocked', 'held', 'license'), true) ? ' bottleneck' : '') . ($gn && $gn['license'] !== '' ? ' license' : '')
-                . ($gn && !in_array($gn['origin'], array('wporg', 'internal'), true) ? ' premium' : '');
+                . ($gn && !in_array($gn['origin'], array('wporg', 'internal'), true) ? ' premium' : '')
+                . (($risk || ($gn && in_array($gn['status'], array('bottleneck', 'blocked', 'held', 'license'), true))) ? ' fix' : '');
             echo '<details class="sn-plugin-entry sn-entry-' . esc_attr($risk ? $tier : ($state['state'] !== 'ok' ? 'review' : 'clear')) . '" id="sn-plugin-' . esc_attr(sanitize_html_class($p['slug'])) . '" data-sn-name="' . esc_attr(strtolower($p['name'] . ' ' . $p['slug'])) . '" data-sn-tags="' . esc_attr(trim($filter)) . '"><summary>';
             echo '<span class="sn-plugin-icon" aria-hidden="true">' . self::e(strtoupper(substr(trim((string) $p['name']), 0, 1))) . '</span><span class="sn-plugin-main"><strong>' . self::e($p['name']) . '</strong><small>' . self::e($p['version']) . ($update ? ' → ' . self::e($update) : '') . ' · ' . ($p['active'] ? 'Attivo' : 'Inattivo') . ($gn && $gn['auto'] ? ' · aggiornamento automatico' : '') . '</small></span><span class="sn-plugin-flags">';
             if ($risk) { echo self::sn_badge($risk . ' vulnerabilità', $tier); }
@@ -3040,6 +3008,50 @@ final class Integra_Sentinel_Master {
             echo '</div></details>';
         }
         echo '</div><p class="sn-no-results" id="sn-no-results" hidden>Nessun plugin corrisponde alla ricerca o al filtro scelto.</p></section>';
+        Integra_Sentinel_Admin_Pages::requests_panel($site);
+        Integra_Sentinel_Admin_Pages::probe_panel($site);
+
+        // Dettagli tecnici: tutto cio' che serve per indagare, chiuso per non affollare la scheda.
+        echo '<details class="sn-panel sn-config sn-tech" id="sn-tech" data-sn-tech><summary><span><strong>Dettagli tecnici</strong><small>Mappa delle dipendenze, origine dei plugin, server, temi, controlli SEO/SSL/log, gravità e copertura delle scansioni</small></span><span class="sn-chevron">⌄</span></summary><div class="sn-config-body">';
+        if (Integra_Sentinel_Settings::can_manage()) {
+            echo '<section class="sn-panel sn-scan"><div><h3>Controllo delle vulnerabilità e SSL</h3><p>Il Master interroga i database di vulnerabilità per WordPress, temi e plugin del sito e verifica il certificato HTTPS. Nessuna azione sul sito.</p></div><div><button type="button" class="button button-primary" id="sn-scan-now" data-site="' . esc_attr($site['id']) . '" data-nonce="' . esc_attr(wp_create_nonce('integra_sentinel_scan_site')) . '">Controlla adesso</button><div id="sn-scan-progress" role="status" aria-live="polite"></div></div></section>';
+        }
+        self::sn_dependency_section($graph);
+        echo '<div class="sn-main-grid sn-deps-grid">';
+        self::sn_origin_panel($graph);
+        Integra_Sentinel_Admin_Pages::themes_panel($analysis);
+        echo '</div>';
+        Integra_Sentinel_Admin_Pages::environment_panel($analysis);
+        $sec = (array) ($r['security'] ?? array());
+        $ssl_days = $site['ssl_days_left'] ?? null;
+        echo '<div class="sn-env-grid">';
+        echo '<div class="sn-env-card"><strong>Indicizzazione SEO</strong>' . (!isset($sec['blog_public']) || $sec['blog_public'] ? self::sn_badge('Indicizzabile (OK)', 'ok') : self::sn_badge('BLOCCATO (noindex)', 'danger')) . '</div>';
+        echo '<div class="sn-env-card"><strong>Certificato SSL</strong>' . ($ssl_days === null ? self::sn_badge('Al prossimo audit', 'muted') : ($ssl_days < 14 ? self::sn_badge('Scade in ' . (int) $ssl_days . 'gg', 'danger') : self::sn_badge('Valido (' . (int) $ssl_days . ' giorni)', 'ok'))) . '</div>';
+        $adm_count = count((array) ($sec['admins'] ?? array()));
+        $fedit = !empty($sec['file_edit_allowed']);
+        echo '<div class="sn-env-card"><strong>Hardening &amp; Admin</strong>' . ($adm_count ? '<b>' . $adm_count . ' admin</b> · ' : '') . ($fedit ? self::sn_badge('Editor PHP attivo', 'warn') : self::sn_badge('DISALLOW_FILE_EDIT', 'ok')) . '</div>';
+        $dlog = (int) ($sec['debug_log_kb'] ?? 0);
+        echo '<div class="sn-env-card"><strong>Log &amp; Fatal Error</strong>' . ($dlog > 0 ? self::sn_badge('debug.log ' . $dlog . ' KB', 'warn') : self::sn_badge('Nessun debug.log', 'ok')) . (!empty($sec['last_fatal']) ? '<div style="font-size:11px;color:#a91f36;margin-top:4px">' . self::e($sec['last_fatal']) . '</div>' : '') . '</div>';
+        echo '</div>';
+        echo '<section class="sn-panel"><div class="sn-section-head"><div><h3>Gravità per componente</h3><p>Ogni componente è contato una volta, in base al suo score più alto.</p></div></div>';
+        self::sn_chart($m['tiers'], $m['affected'], array('critical'=>'Critica','high'=>'Alta','medium'=>'Media','low'=>'Bassa','unknown'=>'Non classificata'));
+        echo '<div class="sn-coverage"><div><strong>Copertura WPVulnerability</strong><span>' . $coverage['ok'] . ' verificati su ' . $coverage['total'] . ' interrogabili</span></div>';
+        echo '<div class="sn-progress"><div style="width:' . esc_attr($coverage['total'] ? number_format($coverage['ok'] / $coverage['total'] * 100, 2, '.', '') : '0') . '%"></div></div>';
+        if ($coverage['bad'] || $coverage['waiting'] || $coverage['stale'] || $coverage['identity_review']) {
+            echo '<p class="sn-hint">' . $coverage['bad'] . ' controlli non riusciti · ' . $coverage['waiting'] . ' in attesa · ' . $coverage['stale'] . ' verifiche oltre 24 ore · ' . $coverage['identity_review'] . ' identità da verificare; ' . $coverage['internal'] . ' componenti interni fuori dai feed esterni.</p>';
+        } else { echo '<p class="sn-hint">Interrogazioni completate per i componenti identificati; ' . $coverage['internal'] . ' componenti interni non inclusi nei feed. Il risultato dipende dalle fonti esterne.</p>'; }
+        echo '</div></section>';
+        $suspected = self::sn_group_findings((array) ($site['possible_findings'] ?? array()));
+        if ($suspected) {
+            echo '<section class="sn-panel"><div class="sn-section-head"><div><h3>Corrispondenze da confermare</h3><p>Advisory associati allo slug di componenti con Update URI esterno non identificati con sufficiente certezza. Non sono conteggiati come vulnerabilità confermate.</p></div></div>';
+            foreach ($suspected as $g) {
+                echo '<details class="sn-nested-details"><summary>' . self::e($g['name']) . ' · ' . (int) $g['count'] . ' advisory potenziali</summary>';
+                self::sn_advisory_rows($g['items']);
+                echo '</details>';
+            }
+            echo '</section>';
+        }
+        echo '</div></details>';
         Integra_Sentinel_Admin_Pages::site_meta_form($site);
         echo '<details class="sn-panel sn-config sn-extra"><summary><span><strong>Temi, MU-Plugins, Amministratori, WPScan, storico e gestione</strong><small>Informazioni complete, storico dei cambi di versione e gestione delle chiavi</small></span><span class="sn-chevron">⌄</span></summary><div class="sn-config-body">';
         $theme_groups = $m['groups'];

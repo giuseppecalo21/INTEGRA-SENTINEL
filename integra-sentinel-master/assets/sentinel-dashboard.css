@@ -190,6 +190,10 @@
 .sn-config .is-panel.sn-wpscan{background:#fff;border:1px solid #e6edf1;padding:14px 16px;border-radius:5px;margin:14px 0}
 .sn-deps-settings textarea{width:100%}
 .sn-products td small code{font-size:11px}
+.sn-report-steps{display:grid;gap:16px}.sn-report-steps h3 small{font-weight:400}
+.sn-draft-body{font-size:14px;line-height:1.6}
+.sn-facts{max-height:340px;overflow:auto;background:#f6f8fa;border:1px solid #e3e9ef;border-radius:5px;padding:10px 12px;font-size:12px;white-space:pre-wrap}
+.sn-draft-preview{font-size:14px;line-height:1.6;max-width:760px}
 @media(max-width:1200px){.sn-ready{grid-template-columns:repeat(3,minmax(0,1fr))}.sn-rings{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.sn-group-forms,.sn-form-grid,.sn-trend-grid{grid-template-columns:1fr}.sn-page-row{grid-template-columns:1fr}.sn-detail-actions{justify-content:flex-start}}
 @media(max-width:620px){.sn-ready{grid-template-columns:repeat(2,minmax(0,1fr))}.sn-group{grid-template-columns:1fr}.sn-group-side{flex-direction:row;align-items:baseline;gap:10px;text-align:left}.sn-rings{grid-template-columns:1fr}.sn-nav-link{padding:7px 10px}}

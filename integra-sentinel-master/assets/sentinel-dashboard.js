@@ -561,7 +561,11 @@
     });
   });
 
+  // La mappa vive nei "Dettagli tecnici", chiusi all'apertura della scheda: si adatta quando vengono aperti.
+  var techPanel = stage.closest('details');
+  if (techPanel) techPanel.addEventListener('toggle', function () { if (techPanel.open) fit(); });
   function focusNode(id, scroll) {
+    if (techPanel && !techPanel.open) { techPanel.open = true; fit(); }
     if (!byId[id]) return;
     showTab('graph', false);
     if (!rendered[id]) {
@@ -735,6 +739,15 @@
     svg.addEventListener('keydown', function (ev) {
       if (ev.key === 'ArrowLeft') { ev.preventDefault(); show(index - 1); }
       if (ev.key === 'ArrowRight') { ev.preventDefault(); show(index + 1); }
+    });
+  });
+
+  // Pulsanti che avviano operazioni lunghe (bozza scritta dall'IA): disattivati con un messaggio d'attesa.
+  all('[data-sn-busy]').forEach(function (button) {
+    var form = button.form;
+    if (!form) return;
+    form.addEventListener('submit', function () {
+      setTimeout(function () { button.disabled = true; button.textContent = button.getAttribute('data-sn-busy'); }, 0);
     });
   });
 

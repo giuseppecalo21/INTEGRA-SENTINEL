@@ -3,7 +3,7 @@ Contributors: integra
 Tags: wordpress, vulnerability, monitoring, security, updates
 Requires at least: 6.5
 Requires PHP: 7.4
-Stable tag: 1.8.0
+Stable tag: 1.9.0
 License: GPLv2 or later
 
 Monitoraggio centralizzato degli aggiornamenti e delle vulnerabilita di siti WordPress.
@@ -11,6 +11,15 @@ Author: Integra | https://integracorporate.it/
 
 Principio: il Master e' in SOLA LETTURA verso i siti dei clienti. Non installa, non aggiorna e non modifica nulla:
 riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il lavoro pesante resta sul Master.
+
+== 1.9.0 - 24 October 2026 ==
+* Resoconti per i clienti scritti con l'IA (Report clienti → Prepara il resoconto): note dell'agenzia, bozza scritta dall'IA, rilettura e approvazione, anteprima e invio. Il resoconto approvato apre il report mensile e l'email al cliente; le bozze non approvate non escono mai.
+* L'IA riceve solo fatti verificabili: aggiornamenti del mese (con le vulnerabilita' che hanno corretto, ricavate dai feed), aggiornamenti in sospeso con il motivo rilevato da Sentinel o dalle eccezioni approvate, interventi chiusi con le note, disponibilita' e stato tecnico. Mai email, amministratori, credenziali o percorsi dei file. Istruzioni esplicite: nessuna motivazione inventata, italiano naturale, registro voi/Lei/tu a scelta.
+* Impostazioni → Intelligenza artificiale: Google Gemini (piano gratuito, modello predefinito gemini-flash-latest), Anthropic Claude o qualsiasi API compatibile OpenAI (OpenAI, Mistral, Groq, OpenRouter). Chiave cifrata, verifica del collegamento ed elenco dei modelli Gemini disponibili. Con il piano gratuito di Gemini Google puo' usare i dati inviati per migliorare i suoi servizi.
+* Panoramica semplificata: 4 indicatori invece di 10, un solo elenco "Cosa sistemare per primo", filtri dei siti ridotti a Tutti / Da sistemare / Da verificare / Non collegati.
+* Scheda del sito semplificata: in alto vulnerabilita' da correggere e cosa blocca gli aggiornamenti; mappa delle dipendenze, origine dei plugin, server, temi, controlli SEO/SSL/log, gravita' e copertura raccolti in "Dettagli tecnici". Filtri dei plugin ridotti a Tutti / Da sistemare / Da aggiornare / Premium.
+* I mesi dei documenti sono sempre in italiano; gli avvisi di WordPress non finiscono piu' dentro l'intestazione delle pagine.
+* Nuova tabella per le bozze dei resoconti (creata automaticamente all'aggiornamento). Nessuna modifica richiesta ai Client.
 
 == 1.8.0 - 23 October 2026 ==
 * Centro colli di bottiglia nella panoramica: tutto cio' che impedisce di aggiornare, raggruppato per causa e per prodotto ("ACF PRO: licenza scaduta su 6 siti" = un'azione), con gravita', impatto, minuti stimati e chi deve agire (agenzia, cliente, hosting, fornitore). Pagina dedicata con filtri, ricerca, esportazione CSV, interventi ed eccezioni approvate.
