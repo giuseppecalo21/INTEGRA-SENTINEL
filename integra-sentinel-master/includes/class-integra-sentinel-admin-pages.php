@@ -289,7 +289,7 @@ final class Integra_Sentinel_Admin_Pages {
                 $tone = array('update' => 'brand', 'core' => 'brand', 'install' => 'ok', 'remove' => 'muted', 'admin' => 'warn')[$e['type']] ?? 'muted';
                 echo '<tr id="sn-ev-' . (int) $e['id'] . '"><td>' . self::e(wp_date('d/m/Y H:i', (int) $e['at'])) . '</td>';
                 if ($site_id === '') { echo '<td><a href="' . esc_url($link(array('ym' => $period['ym'], 'site' => $e['site_id']))) . '">' . self::e($sites[$e['site_id']]['label'] ?? 'Sito rimosso') . '</a></td>'; }
-                echo '<td>' . self::badge($labels[$e['type']] ?? $e['type'], $tone) . ' ' . self::e(self::event_text($e)) . '</td><td>';
+                echo '<td>' . self::badge($labels[$e['type']] ?? $e['type'], $tone) . ' ' . self::e(self::event_text($e)) . (($e['flags'] ?? '') === 'auto' ? ' ' . self::badge('automatico', 'muted') : '') . '</td><td>';
                 if ($manage && in_array($e['type'], array('update', 'core', 'install', 'remove'), true)) {
                     Integra_Sentinel_Admin::form_start('event_note', 'integra-sentinel-history', array('id' => $e['id'], '_sn_ym' => $period['ym'], '_sn_site' => $site_id, '_sn_type' => $type, '_sn_anchor' => 'sn-ev-' . (int) $e['id']), 'sn-note-form');
                     echo '<input type="text" name="note" maxlength="1000" value="' . esc_attr((string) $e['note']) . '" placeholder="Es.: corregge un problema al checkout segnalato dal cliente" aria-label="Motivo"> <button type="submit" class="button button-small">Salva</button></form>';
@@ -298,7 +298,7 @@ final class Integra_Sentinel_Admin_Pages {
             }
             echo '</tbody></table></div>';
         }
-        echo '<p class="sn-hint">Lo storico viene conservato per 2 anni. Il motivo non è obbligatorio: se manca, il resoconto dice solo che il componente è stato aggiornato (o che chiudeva falle di sicurezza note, quando risulta dai database delle vulnerabilità).</p></section>';
+        echo '<p class="sn-hint">“automatico” = applicato da WordPress con gli aggiornamenti automatici (rilevato dal Client 1.8 o successivo). Lo storico viene conservato per 2 anni. Il motivo non è obbligatorio: se manca, il resoconto dice solo che il componente è stato aggiornato (o che chiudeva falle di sicurezza note, quando risulta dai database delle vulnerabilità).</p></section>';
         Integra_Sentinel_Admin::close();
     }
 
@@ -311,6 +311,7 @@ final class Integra_Sentinel_Admin_Pages {
         if ($site_id !== '' && isset($sites[$site_id])) { self::report_editor($sites[$site_id], $period); return; }
         $drafts = Integra_Sentinel_Store::drafts_for_month($period['ym']);
         $statuses = Integra_Sentinel_Store::draft_statuses();
+        $manage = Integra_Sentinel_Settings::can_manage();
         Integra_Sentinel_Admin::open('integra-sentinel-reports');
         echo '<section class="sn-page-heading"><div><p class="sn-kicker">REPORT CLIENTI</p><h2>Cosa abbiamo fatto, spiegato ai clienti</h2><p>Per ogni sito prepari il resoconto del mese: l’IA scrive una bozza comprensibile partendo dai dati raccolti, tu la rileggi, la approvi e la invii insieme al report con i numeri.</p></div></section>';
         if (!Integra_Sentinel_AI::configured()) {
@@ -320,6 +321,22 @@ final class Integra_Sentinel_Admin_Pages {
         $last_month = wp_date('Y-m', strtotime('first day of last month', current_time('timestamp')));
         echo '<form method="get" class="sn-month-form"><input type="hidden" name="page" value="integra-sentinel-reports"><label>Mese <input type="month" name="ym" value="' . esc_attr($period['ym']) . '"></label> <button class="button" type="submit">Mostra</button>'
             . ' <a class="button-link" href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-reports', array('ym' => $last_month))) . '">Mese scorso</a> · <a class="button-link" href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-reports', array('ym' => $this_month))) . '">Mese in corso (finora)</a></form>';
+        $queue = Integra_Sentinel_Reports::queue();
+        if ($queue) {
+            // Se il cron si e' interrotto, la coda riparte da qui.
+            if (!wp_next_scheduled(Integra_Sentinel_Reports::HOOK_QUEUE)) { wp_schedule_single_event(time() + 5, Integra_Sentinel_Reports::HOOK_QUEUE); }
+            $qp = Integra_Sentinel_Reports::month_bounds($queue['ym']);
+            echo '<div class="notice notice-info inline"><p><strong>Bozze di ' . self::e($qp['label']) . ' in preparazione:</strong> ' . (int) ($queue['total'] - count($queue['sites'])) . ' di ' . (int) $queue['total'] . ' completate' . ($queue['failed'] ? ', ' . count($queue['failed']) . ' non riuscite' : '') . '. Ricarica la pagina per vedere l’avanzamento.';
+            if ($manage) {
+                echo '</p>';
+                Integra_Sentinel_Admin::form_start('drafts_cancel', 'integra-sentinel-reports', array('_sn_ym' => $period['ym']));
+                echo '<p><button class="button button-small" type="submit">Interrompi</button></p></form>';
+            } else { echo '</p>'; }
+            echo '</div>';
+        } elseif ($manage && Integra_Sentinel_AI::configured()) {
+            Integra_Sentinel_Admin::form_start('drafts_all', 'integra-sentinel-reports', array('ym' => $period['ym'], '_sn_ym' => $period['ym']), 'sn-drafts-all');
+            echo '<p><button class="button button-primary" type="submit">Prepara tutte le bozze di ' . self::e($period['label']) . '</button> <span class="sn-hint">Solo per i siti che non hanno ancora un resoconto: quelli già scritti non vengono toccati.</span></p></form>';
+        }
         $counts = Integra_Sentinel_Store::update_counts($period['start'], $period['end']);
         echo '<section class="sn-section"><div class="sn-table-wrap"><table class="sn-simple-table"><thead><tr><th>Sito</th><th>Aggiornamenti registrati</th><th>Resoconto di ' . self::e($period['label']) . '</th><th>Documenti</th></tr></thead><tbody>';
         if (!$sites) { echo '<tr><td colspan="4" class="sn-muted">Nessun sito registrato.</td></tr>'; }
@@ -505,6 +522,7 @@ final class Integra_Sentinel_Admin_Pages {
             echo '<label>Modello <small>(vuoto = predefinito del fornitore)</small><input type="text" name="model" value="' . esc_attr($stored) . '" placeholder="' . esc_attr(Integra_Sentinel_AI::providers()[$ai['provider']]['model'] ?: 'nome del modello') . '"></label>';
             echo '<label>Indirizzo base API <small>(solo per “Compatibile OpenAI”)</small><input type="url" name="base_url" value="' . esc_attr($ai['base_url']) . '" placeholder="https://api.openai.com/v1"></label>';
             echo '<label>Come rivolgersi al cliente<select name="register"><option value="voi"' . selected($ai['register'], 'voi', false) . '>Voi (“il vostro sito”)</option><option value="lei"' . selected($ai['register'], 'lei', false) . '>Lei (“il Suo sito”)</option><option value="tu"' . selected($ai['register'], 'tu', false) . '>Tu (“il tuo sito”)</option></select></label>';
+            echo '<label class="sn-inline-check sn-span-2"><input type="checkbox" name="auto_drafts" value="1"' . checked(!empty(Integra_Sentinel_Settings::get('ai')['auto_drafts']), true, false) . '> Il primo del mese prepara da sola le bozze del mese precedente per tutti i siti e avvisa (email e canali di notifica) quando sono pronte da rileggere. Nessuna bozza viene inviata senza la tua approvazione.</label>';
             echo '<label class="sn-span-2">Indicazioni di stile <small>(facoltative)</small><textarea name="style" rows="2" placeholder="Es.: frasi brevi; chiudi sempre ricordando che siamo disponibili per chiarimenti.">' . esc_textarea($ai['style']) . '</textarea></label></div>';
             echo '<ul class="sn-hint">';
             foreach (Integra_Sentinel_AI::providers() as $prov) { echo '<li><strong>' . self::e($prov['label']) . '</strong>: ' . self::e($prov['hint']) . '</li>'; }

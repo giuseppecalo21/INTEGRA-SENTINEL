@@ -53,6 +53,7 @@ final class Integra_Sentinel_Master {
     const HOOK_CLEANUP = 'integra_sentinel_master_nonce_cleanup';
     const MANUAL_DEPS = 'integra_sentinel_manual_deps';
     const HOOK_PROBE = 'integra_sentinel_master_probe';
+    const ADVISORY_SEEN = 'integra_sentinel_advisory_seen';
 
     public static function init() {
         add_action('rest_api_init', array(__CLASS__, 'rest'));
@@ -72,6 +73,7 @@ final class Integra_Sentinel_Master {
         add_action(self::HOOK_RETRY, array(__CLASS__, 'send_daily_digest'));
         add_action(self::HOOK_ALERTS, array(__CLASS__, 'dispatch_alerts'));
         add_action(self::HOOK_PROBE, array(__CLASS__, 'run_probes'));
+        add_action(Integra_Sentinel_Reports::HOOK_QUEUE, array('Integra_Sentinel_Reports', 'process_queue'));
         add_filter('cron_schedules', array(__CLASS__, 'cron_schedules'));
         add_filter('user_has_cap', array('Integra_Sentinel_Settings', 'grant_caps'), 10, 4);
         Integra_Sentinel_Admin::init();
@@ -98,6 +100,7 @@ final class Integra_Sentinel_Master {
         wp_clear_scheduled_hook(self::HOOK_RETRY);
         wp_clear_scheduled_hook(self::HOOK_CLEANUP);
         wp_clear_scheduled_hook(self::HOOK_PROBE);
+        wp_clear_scheduled_hook(Integra_Sentinel_Reports::HOOK_QUEUE);
         wp_clear_scheduled_hook('integra_sentinel_master_audit_soon');
     }
 
@@ -232,13 +235,40 @@ final class Integra_Sentinel_Master {
     /** Merge only the fetched feed entries; never overwrite fresh results from another scan. */
     private static function store_feed_delta($option, $delta) {
         if (!$delta) { return true; }
-        return self::mutate_option($option, function($current) use ($delta) {
+        $ok = self::mutate_option($option, function($current) use ($delta) {
             foreach ($delta as $key => $entry) {
                 if (empty($current[$key]['at']) || (int) $current[$key]['at'] <= (int) ($entry['at'] ?? 0)) {
                     $current[$key] = $entry;
                 }
             }
             return $current;
+        });
+        if ($ok && $option === self::FEEDS) { self::note_advisories_seen($delta); }
+        return $ok;
+    }
+
+    /**
+     * Quando Sentinel vede per la prima volta ogni vulnerabilita': serve a dire se un aggiornamento chiudeva una falla
+     * gia' segnalata o se la falla e' emersa dopo. Alla prima esecuzione tutto cio' che e' gia' in archivio ha data 0
+     * (sconosciuta): non si attribuisce una data che non conosciamo.
+     */
+    private static function note_advisories_seen($delta) {
+        self::mutate_option(self::ADVISORY_SEEN, function($seen) use ($delta) {
+            $first_run = empty($seen['init']);
+            $map = (array) ($seen['map'] ?? array());
+            $sources = $delta;
+            if ($first_run) { $sources = array_merge((array) get_option(self::FEEDS, array()), $delta); }
+            foreach ($sources as $key => $entry) {
+                if (($entry['state'] ?? '') !== 'ok') { continue; }
+                list($type, $slug) = array_pad(explode(':', (string) $key, 2), 2, '');
+                foreach ((array) ($entry['advisories'] ?? array()) as $v) {
+                    if (!is_array($v)) { continue; }
+                    $sig = self::signature($type, $slug, $v);
+                    if (!isset($map[$sig])) { $map[$sig] = $first_run ? 0 : time(); }
+                }
+            }
+            if (count($map) > 30000) { $map = array_slice($map, -30000, null, true); }
+            return array('init' => 1, 'map' => $map);
         });
     }
 
@@ -826,7 +856,15 @@ final class Integra_Sentinel_Master {
         $schedule_alerts = false;
         $events = array();
         $store_ready = get_option(Integra_Sentinel_Store::DB_OPTION) === Integra_Sentinel_Store::DB_VERSION;
-        $ok = self::mutate_sites(function($current) use ($id, $sites, $safe, $used_prev, $store_ready, &$accepted, &$schedule_alerts, &$events) {
+        // Client >= 1.8: aggiornamenti applicati da WordPress in automatico ("tipo:slug:versione"), solo per marcare lo storico.
+        $auto_updated = array();
+        foreach (array_slice((array) ($report['auto_updated'] ?? array()), 0, 100) as $item) {
+            if (!is_array($item) || !in_array($item['type'] ?? '', array('plugin', 'theme', 'core'), true)) { continue; }
+            $slug = $item['type'] === 'core' ? 'wordpress' : sanitize_title((string) ($item['slug'] ?? ''));
+            $version = self::field($item['version'] ?? '', 40);
+            if ($slug !== '' && $version !== '') { $auto_updated[$item['type'] . ':' . $slug . ':' . $version] = true; }
+        }
+        $ok = self::mutate_sites(function($current) use ($id, $sites, $safe, $used_prev, $store_ready, $auto_updated, &$accepted, &$schedule_alerts, &$events) {
             if (!isset($current[$id]) || !hash_equals((string) ($sites[$id]['secret'] ?? ''), (string) ($current[$id]['secret'] ?? ''))) {
                 return null;
             }
@@ -838,7 +876,8 @@ final class Integra_Sentinel_Master {
             $changes = self::diff_versions($old_report, $safe);
             if ($store_ready) {
                 // Lo storico vive nella tabella eventi (scritta dopo il lock): nessun limite di 100 voci.
-                foreach ($changes as $change) { $events[] = array('at' => time(), 'type' => Integra_Sentinel_Store::event_type($change), 'message' => $change); }
+                $auto = self::auto_changes($old_report, $safe, $auto_updated);
+                foreach ($changes as $change) { $events[] = array('at' => time(), 'type' => Integra_Sentinel_Store::event_type($change), 'message' => $change, 'flags' => isset($auto[$change]) ? 'auto' : ''); }
             } else {
                 $history = (array) ($site['history'] ?? array());
                 foreach ($changes as $change) { $history[] = array('at' => time(), 'event' => $change); }
@@ -921,6 +960,25 @@ final class Integra_Sentinel_Master {
             }
         }
         return array_slice($changes, 0, 120);
+    }
+
+    /** Messaggi di diff_versions() che corrispondono ad aggiornamenti applicati in automatico da WordPress. */
+    private static function auto_changes($old, $new, $auto_updated) {
+        $out = array();
+        if (!$auto_updated || empty($old)) { return $out; }
+        if (($old['wp'] ?? '') !== $new['wp'] && isset($auto_updated['core:wordpress:' . $new['wp']])) { $out['WordPress: ' . $old['wp'] . ' → ' . $new['wp']] = true; }
+        foreach (array('plugins' => array('file', 'plugin'), 'themes' => array('slug', 'theme')) as $group => $spec) {
+            $before = array();
+            foreach ((array) ($old[$group] ?? array()) as $v) { if (!empty($v[$spec[0]])) { $before[$v[$spec[0]]] = $v; } }
+            foreach ((array) ($new[$group] ?? array()) as $v) {
+                $key = $v[$spec[0]] ?? '';
+                if ($key === '' || !isset($before[$key]) || ($before[$key]['version'] ?? '') === ($v['version'] ?? '')) { continue; }
+                if (isset($auto_updated[$spec[1] . ':' . ($v['slug'] ?? '') . ':' . ($v['version'] ?? '')])) {
+                    $out[$v['name'] . ': ' . ($before[$key]['version'] ?? '') . ' → ' . ($v['version'] ?? '')] = true;
+                }
+            }
+        }
+        return $out;
     }
 
     /** Solo link http/https, senza credenziali: provengono dal Client e finiscono in href. */
@@ -1174,10 +1232,11 @@ final class Integra_Sentinel_Master {
         }
         if (!in_array($before['status'], array('ok', 'review'), true)) { return null; }
         $still = array_column($after['findings'], 'id');
+        $seen = (array) (get_option(self::ADVISORY_SEEN, array())['map'] ?? array());
         $out = array();
         foreach ($before['findings'] as $f) {
             if (in_array($f['id'], $still, true)) { continue; }
-            $out[] = array('title' => $f['title'], 'score' => $f['score'], 'tier' => self::sn_tier($f['score']));
+            $out[] = array('title' => $f['title'], 'score' => $f['score'], 'tier' => self::sn_tier($f['score']), 'first_seen' => isset($seen[$f['id']]) ? (int) $seen[$f['id']] : 0);
         }
         return $out;
     }
@@ -2839,7 +2898,7 @@ final class Integra_Sentinel_Master {
         echo '<table class="sn-simple-table"><tbody>';
         foreach ($events as $e) {
             $tone = array('update' => 'brand', 'core' => 'brand', 'install' => 'ok', 'remove' => 'muted', 'admin' => 'warn')[$e['type']] ?? 'muted';
-            echo '<tr><td style="width:130px">' . self::e(wp_date('d/m/Y H:i', (int) $e['at'])) . '</td><td>' . self::sn_badge($labels[$e['type']] ?? $e['type'], $tone) . ' ' . self::e(Integra_Sentinel_Admin_Pages::event_text($e))
+            echo '<tr><td style="width:130px">' . self::e(wp_date('d/m/Y H:i', (int) $e['at'])) . '</td><td>' . self::sn_badge($labels[$e['type']] ?? $e['type'], $tone) . ' ' . self::e(Integra_Sentinel_Admin_Pages::event_text($e)) . (($e['flags'] ?? '') === 'auto' ? ' ' . self::sn_badge('automatico', 'muted') : '')
                 . (trim((string) ($e['note'] ?? '')) !== '' ? '<br><small class="sn-muted">' . self::e($e['note']) . '</small>' : '') . '</td></tr>';
         }
         echo '</tbody></table></section>';

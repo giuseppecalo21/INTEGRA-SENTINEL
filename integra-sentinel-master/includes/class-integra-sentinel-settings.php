@@ -38,9 +38,9 @@ final class Integra_Sentinel_Settings {
             'branding' => array('name' => 'Integra', 'url' => 'https://integracorporate.it/', 'logo' => '', 'color' => '#0c8997', 'footer' => '', 'from_name' => ''),
             'roles' => array('view' => array(), 'manage' => array()),
             'webhooks' => array('slack' => '', 'generic' => '', 'telegram_token' => '', 'telegram_chat' => '',
-                'events' => array('integrity', 'cve', 'down', 'license', 'emergency')),
+                'events' => array('integrity', 'cve', 'down', 'license', 'emergency', 'drafts')),
             'scan' => array('batch' => 6),
-            'ai' => array('provider' => 'gemini', 'model' => '', 'base_url' => '', 'key' => '', 'register' => 'voi', 'style' => ''),
+            'ai' => array('provider' => 'gemini', 'model' => '', 'base_url' => '', 'key' => '', 'register' => 'voi', 'style' => '', 'auto_drafts' => 1),
         );
     }
 

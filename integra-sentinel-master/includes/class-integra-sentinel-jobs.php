@@ -25,6 +25,7 @@ final class Integra_Sentinel_Jobs {
             self::license_reminders();
             self::auto_resolve_tasks($fleet);
             Integra_Sentinel_Store::cleanup();
+            Integra_Sentinel_Reports::maybe_auto_drafts();
             return true;
         } finally {
             Integra_Sentinel_Master::release_lock('daily_jobs');

@@ -3,7 +3,7 @@
  * Plugin Name: Integra Sentinel Client
  * Plugin URI: https://integracorporate.it/
  * Description: Inventario WordPress, telemetria di integrità zero-noise e report firmati verso Integra Sentinel Master.
- * Version: 1.7.0
+ * Version: 1.8.0
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: Integra
@@ -15,7 +15,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class Integra_Sentinel_Client {
-    const VERSION  = '1.7.0';
+    const VERSION  = '1.8.0';
     const OPTION   = 'integra_sentinel_client_settings';
     const LAST     = 'integra_sentinel_client_last';
     const BASELINE = 'integra_sentinel_client_baseline';
@@ -24,6 +24,7 @@ final class Integra_Sentinel_Client {
     const HOOK_UPD = 'integra_sentinel_client_after_update';
     const COUPLING = 'integra_sentinel_client_couplings';
     const WC_TPL   = 'integra_sentinel_client_wc_templates';
+    const AUTO     = 'integra_sentinel_client_auto_updated';
 
     public static function init() {
         add_action('admin_menu', array(__CLASS__, 'menu'));
@@ -34,6 +35,7 @@ final class Integra_Sentinel_Client {
         add_action(self::HOOK, array(__CLASS__, 'send'));
         add_action(self::HOOK_UPD, array(__CLASS__, 'send'));
         add_action('upgrader_process_complete', array(__CLASS__, 'after_update'), 10, 2);
+        add_action('automatic_updates_complete', array(__CLASS__, 'after_auto_updates'));
         add_action('shutdown', array(__CLASS__, 'capture_fatal_error'), 999);
     }
 
@@ -63,6 +65,28 @@ final class Integra_Sentinel_Client {
                 wp_schedule_single_event(time() + 180, self::HOOK_UPD);
             }
         }
+    }
+
+    /**
+     * Aggiornamenti applicati da WordPress in automatico: si annotano (tipo, slug, versione) perche' il Master
+     * possa distinguerli da quelli fatti dall'agenzia. Si conservano 40 giorni, al massimo 100 voci.
+     */
+    public static function after_auto_updates($results) {
+        $list = (array) get_option(self::AUTO, array());
+        foreach (array('plugin', 'theme', 'core') as $type) {
+            foreach ((array) ($results[$type] ?? array()) as $r) {
+                if (!is_object($r) || $r->result !== true || !is_object($r->item ?? null)) { continue; }
+                $item = $r->item;
+                if ($type === 'plugin') { $slug = self::plugin_slug((string) ($item->plugin ?? '')); $version = (string) ($item->new_version ?? ''); }
+                elseif ($type === 'theme') { $slug = sanitize_title((string) ($item->theme ?? '')); $version = (string) ($item->new_version ?? ''); }
+                else { $slug = 'wordpress'; $version = (string) ($item->current ?? ($item->version ?? '')); }
+                if ($slug === '' || $version === '') { continue; }
+                $list[] = array('type' => $type, 'slug' => $slug, 'version' => substr($version, 0, 40), 'at' => time());
+            }
+        }
+        $cut = time() - 40 * DAY_IN_SECONDS;
+        $list = array_values(array_filter($list, function($e) use ($cut) { return is_array($e) && (int) ($e['at'] ?? 0) >= $cut; }));
+        update_option(self::AUTO, array_slice($list, -100), false);
     }
 
     /** Intercetta eventuali errori fatali PHP sul sito cliente per segnalarli al Master. */
@@ -1055,6 +1079,7 @@ final class Integra_Sentinel_Client {
             'core_md5' => self::core_md5(),
             'reported_at' => time(),
             'client_version' => self::VERSION,
+            'auto_updated' => array_slice((array) get_option(self::AUTO, array()), -100),
         );
     }
 

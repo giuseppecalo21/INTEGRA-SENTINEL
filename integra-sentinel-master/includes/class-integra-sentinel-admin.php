@@ -82,6 +82,9 @@ final class Integra_Sentinel_Admin {
             'draft_ai' => array('Bozza scritta dall’IA: rileggila, correggila se serve e approvala prima di inviarla.', 'success'),
             'draft_ai_fail' => array('L’IA non ha prodotto la bozza: vedi il messaggio sopra il testo.', 'error'),
             'draft_saved' => array('Resoconto salvato.', 'success'),
+            'drafts_queued' => array('Bozze in preparazione: l’IA le scrive in sottofondo, un paio alla volta. Riceverai un avviso quando sono pronte.', 'success'),
+            'drafts_none' => array('Nessuna bozza da preparare: tutti i siti con un inventario hanno già un resoconto per questo mese (o l’IA non è configurata).', 'warning'),
+            'drafts_cancelled' => array('Preparazione delle bozze interrotta. Le bozze già scritte restano.', 'success'),
             'event_note' => array('Motivo salvato: verrà usato nel resoconto per il cliente.', 'success'),
             'draft_approved' => array('Resoconto approvato: ora compare nel report mensile e nell’email al cliente.', 'success'),
             'daily' => array('Andamenti, promemoria e interventi ricalcolati.', 'success'),
@@ -655,6 +658,15 @@ final class Integra_Sentinel_Admin {
                     Integra_Sentinel_Store::draft_save($site_id, $ym, array('status' => 'sent', 'sent_to' => $to));
                 }
                 self::back($ok ? 'report_sent' : 'report_fail');
+            case 'drafts_all':
+                $n = Integra_Sentinel_Reports::enqueue_drafts(sanitize_text_field(self::post('ym')), 'manual');
+                if ($n) { spawn_cron(); }
+                self::back($n ? 'drafts_queued' : 'drafts_none');
+            case 'drafts_cancel':
+                delete_option(Integra_Sentinel_Reports::QUEUE);
+                wp_clear_scheduled_hook(Integra_Sentinel_Reports::HOOK_QUEUE);
+                Integra_Sentinel_Store::log('drafts_queue', 'interrotta');
+                self::back('drafts_cancelled');
             case 'event_note':
                 $event = Integra_Sentinel_Store::event_get(absint(self::post('id')));
                 if (!$event) { self::back('invalid'); }
@@ -663,7 +675,7 @@ final class Integra_Sentinel_Admin {
                 self::back($ok ? 'event_note' : 'invalid');
             case 'ai_settings':
                 $ok = Integra_Sentinel_AI::save(array('provider' => self::post('provider'), 'model' => self::post('model'), 'base_url' => self::post('base_url'),
-                    'key' => self::post('ai_key'), 'register' => self::post('register'), 'style' => self::post('style')));
+                    'key' => self::post('ai_key'), 'register' => self::post('register'), 'style' => self::post('style'), 'auto_drafts' => self::post('auto_drafts')));
                 Integra_Sentinel_Store::log('ai_settings', $ok ? 'salvate' : 'non valide');
                 self::back($ok ? 'ai_saved' : 'invalid');
             case 'ai_test':

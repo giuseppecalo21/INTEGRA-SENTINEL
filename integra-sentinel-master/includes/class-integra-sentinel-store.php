@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) { exit; }
 
 final class Integra_Sentinel_Store {
 
-    const DB_VERSION = '3';
+    const DB_VERSION = '4';
     const DB_OPTION  = 'integra_sentinel_db_version';
     const RETENTION  = array('events' => 730, 'probes' => 120, 'audit' => 400, 'metrics' => 420);
 
@@ -41,6 +41,7 @@ final class Integra_Sentinel_Store {
   type varchar(20) NOT NULL DEFAULT '',
   message text NOT NULL,
   note text NULL,
+  flags varchar(40) NOT NULL DEFAULT '',
   PRIMARY KEY  (id),
   KEY site_at (site_id,at),
   KEY at (at)
@@ -160,7 +161,8 @@ final class Integra_Sentinel_Store {
                 'at' => (int) ($row['at'] ?? time()),
                 'type' => substr((string) ($row['type'] ?? 'note'), 0, 20),
                 'message' => function_exists('mb_substr') ? mb_substr((string) ($row['message'] ?? ''), 0, 500) : substr((string) ($row['message'] ?? ''), 0, 500),
-            ), array('%s', '%d', '%s', '%s'));
+                'flags' => substr(sanitize_key((string) ($row['flags'] ?? '')), 0, 40),
+            ), array('%s', '%d', '%s', '%s', '%s'));
         }
     }
 
@@ -170,7 +172,7 @@ final class Integra_Sentinel_Store {
         $where = $wpdb->prepare('site_id = %s AND at >= %d', (string) $site_id, (int) $since);
         if ($until) { $where .= $wpdb->prepare(' AND at < %d', (int) $until); }
         if ($type !== '') { $where .= $wpdb->prepare(' AND type = %s', $type); }
-        $rows = $wpdb->get_results("SELECT id, at, type, message, note FROM {$table} WHERE {$where} ORDER BY at DESC, id DESC LIMIT " . max(1, min(2000, (int) $limit)), ARRAY_A);
+        $rows = $wpdb->get_results("SELECT id, at, type, message, note, flags FROM {$table} WHERE {$where} ORDER BY at DESC, id DESC LIMIT " . max(1, min(2000, (int) $limit)), ARRAY_A);
         return is_array($rows) ? $rows : array();
     }
 
@@ -184,7 +186,7 @@ final class Integra_Sentinel_Store {
         $where = $wpdb->prepare('at >= %d AND at < %d', (int) $since, (int) $until);
         if ($site_id !== '') { $where .= $wpdb->prepare(' AND site_id = %s', (string) $site_id); }
         if ($types) { $where .= " AND type IN ('" . implode("','", array_map('esc_sql', array_map('sanitize_key', $types))) . "')"; }
-        $rows = $wpdb->get_results("SELECT id, site_id, at, type, message, note FROM {$table} WHERE {$where} ORDER BY at DESC, id DESC LIMIT " . max(1, min(5000, (int) $limit)), ARRAY_A);
+        $rows = $wpdb->get_results("SELECT id, site_id, at, type, message, note, flags FROM {$table} WHERE {$where} ORDER BY at DESC, id DESC LIMIT " . max(1, min(5000, (int) $limit)), ARRAY_A);
         return is_array($rows) ? $rows : array();
     }
 
@@ -208,7 +210,7 @@ final class Integra_Sentinel_Store {
     public static function event_get($id) {
         global $wpdb;
         $table = self::table('events');
-        $row = $wpdb->get_row($wpdb->prepare("SELECT id, site_id, at, type, message, note FROM {$table} WHERE id = %d", absint($id)), ARRAY_A);
+        $row = $wpdb->get_row($wpdb->prepare("SELECT id, site_id, at, type, message, note, flags FROM {$table} WHERE id = %d", absint($id)), ARRAY_A);
         return is_array($row) ? $row : null;
     }
 

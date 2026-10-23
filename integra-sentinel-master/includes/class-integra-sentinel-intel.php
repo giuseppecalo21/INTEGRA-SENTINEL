@@ -12,6 +12,7 @@ final class Integra_Sentinel_Intel {
     const CHECKSUMS    = 'integra_sentinel_checksums';
     const ENVATO       = 'integra_sentinel_envato';
     const ENVATO_ITEMS = 'integra_sentinel_envato_items';
+    const CHANGELOGS   = 'integra_sentinel_changelogs';
 
     /** Stessi file del Client 1.7 (core_md5): solo quelli confrontati con i checksum ufficiali. */
     public static function core_files() {
@@ -148,6 +149,63 @@ final class Integra_Sentinel_Intel {
             foreach ($delta as $slug => $entry) { $current[$slug] = $entry; }
             return array_intersect_key($current, $targets);
         });
+    }
+
+    /**
+     * Changelog ufficiali dei plugin della libreria WordPress.org, letti dal Master e tenuti in archivio 3 giorni.
+     * @param array $wanted slug => versione che deve comparire (se manca si rilegge, al massimo ogni 6 ore)
+     * @return array slug => (versione => elenco di voci)
+     */
+    public static function changelogs($wanted) {
+        $store = get_option(self::CHANGELOGS, array());
+        $store = is_array($store) ? $store : array();
+        $info = self::wporg_info();
+        $requests = array();
+        foreach ((array) $wanted as $slug => $version) {
+            if (($info[$slug]['state'] ?? '') !== 'ok') { continue; }
+            $e = $store[$slug] ?? null;
+            $age = $e ? time() - (int) ($e['at'] ?? 0) : PHP_INT_MAX;
+            if ($e && ($age < 3 * DAY_IN_SECONDS && (isset($e['ver'][$version]) || $age < 6 * HOUR_IN_SECONDS))) { continue; }
+            if (count($requests) >= 8) { break; }
+            $requests[$slug] = array('url' => 'https://api.wordpress.org/plugins/info/1.2/?' . http_build_query(array('action' => 'plugin_information',
+                'request' => array('slug' => $slug, 'fields' => array('sections' => 1, 'versions' => 0, 'reviews' => 0, 'banners' => 0, 'icons' => 0,
+                'contributors' => 0, 'screenshots' => 0, 'tags' => 0, 'ratings' => 0, 'description' => 0, 'short_description' => 0)))), 'timeout' => 8, 'max_bytes' => 1048576);
+        }
+        if ($requests) {
+            $fresh = array();
+            foreach (self::parallel_get($requests) as $slug => $response) {
+                $json = (int) ($response['code'] ?? 0) === 200 ? json_decode((string) $response['body'], true) : null;
+                $fresh[$slug] = array('at' => time(), 'ver' => is_array($json) ? self::parse_changelog((string) ($json['sections']['changelog'] ?? '')) : array());
+            }
+            Integra_Sentinel_Master::mutate_option(self::CHANGELOGS, function($current) use ($fresh) {
+                foreach ($fresh as $slug => $entry) { $current[$slug] = $entry; }
+                return array_slice($current, -400, null, true);
+            });
+            $store = array_merge($store, $fresh);
+        }
+        $out = array();
+        foreach (array_keys((array) $wanted) as $slug) { if (!empty($store[$slug]['ver'])) { $out[$slug] = $store[$slug]['ver']; } }
+        return $out;
+    }
+
+    /** HTML del changelog → versione => voci (testo semplice). Le intestazioni senza numero di versione si ignorano. */
+    public static function parse_changelog($html) {
+        $parts = preg_split('/<h[1-6][^>]*>(.*?)<\/h[1-6]>/is', (string) $html, -1, PREG_SPLIT_DELIM_CAPTURE);
+        $out = array();
+        for ($i = 1; $i + 1 < count($parts) && count($out) < 20; $i += 2) {
+            if (!preg_match('/(\d+(?:\.\d+){1,3})/', wp_strip_all_tags($parts[$i]), $m) || isset($out[$m[1]])) { continue; }
+            $items = array();
+            preg_match_all('/<li[^>]*>(.*?)<\/li>/is', $parts[$i + 1], $li);
+            $lines = $li[1] ?: preg_split('/<br\s*\/?>|<\/p>|\n/i', $parts[$i + 1]);
+            foreach ($lines as $line) {
+                $line = trim(preg_replace('/\s+/', ' ', html_entity_decode(wp_strip_all_tags($line), ENT_QUOTES, 'UTF-8')), " \t*-•");
+                if ($line === '') { continue; }
+                $items[] = function_exists('mb_substr') ? mb_substr($line, 0, 200) : substr($line, 0, 200);
+                if (count($items) >= 10) { break; }
+            }
+            if ($items) { $out[$m[1]] = $items; }
+        }
+        return $out;
     }
 
     private static function parse_wporg($response) {
