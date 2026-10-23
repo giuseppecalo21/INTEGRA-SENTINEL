@@ -1870,7 +1870,7 @@ final class Integra_Sentinel_Master {
     }
 
     private static function mail_distribution($statuses) {
-        $labels = array('critical'=>'Critici','risk'=>'Con vulnerabilità','review'=>'Da verificare','clear'=>'Senza note','offline'=>'Offline');
+        $labels = array('critical'=>'Critici','risk'=>'Con vulnerabilità','review'=>'Da verificare','clear'=>'Senza note','offline'=>'Client senza dati');
         $total = array_sum($statuses);
         $html = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:15px"><tr>';
         if ($total) {
@@ -2221,14 +2221,19 @@ final class Integra_Sentinel_Master {
                     else { $retry = true; }
                 }
 
-                // 3. Alert sito Offline (> 36h).
+                // 3. Client che non invia inventari da oltre 36 ore (il sito puo' essere online: lo dicono le sonde).
                 if (!empty($site['last_seen']) && time() - (int) $site['last_seen'] > 36 * HOUR_IN_SECONDS && empty($site['offline_alerted'])) {
-                    $hook = Integra_Sentinel_Notify::send('down', 'Client muto · ' . $site['label'], 'Il sito ' . $site['url'] . ' non invia inventari da oltre 36 ore: controllare plugin Client, WP-Cron e rete.', self::sn_admin_url($id));
+                    $probe = Integra_Sentinel_Probe::state()[$id] ?? array();
+                    $online = !empty($probe['last_ok']) && empty($probe['down_since']);
+                    $silent_text = 'Il plugin Client di ' . $site['label'] . ' (' . $site['url'] . ') non invia dati da oltre 36 ore. '
+                        . ($online ? 'Il sito è online: risponde normalmente ai controlli del Master. ' : '')
+                        . 'Controlla sul sito Impostazioni → Integra Sentinel (esito dell’ultimo invio), che il plugin sia attivo e che WP-Cron funzioni.';
+                    $hook = Integra_Sentinel_Notify::send('down', 'Il Client non invia dati · ' . $site['label'], $silent_text, self::sn_admin_url($id));
                     if (!empty($cfg['alerts'])) {
-                        $content = self::mail_shell('Connessione assente', 'Il sito non invia inventari da oltre 36 ore.',
-                            self::mail_notice('ATTENZIONE', 'Il Client di ' . $site['label'] . ' (' . $site['url'] . ') non comunica. Controllare plugin, cron e rete.', 'warn')
+                        $content = self::mail_shell('Il Client non invia dati', $online ? 'Il sito è online: il problema riguarda solo il plugin Client.' : 'Nessun inventario da oltre 36 ore.',
+                            self::mail_notice('DA CONTROLLARE', $silent_text, 'warn')
                             . self::mail_cta('Apri il sito nel Master', self::sn_admin_url($id)), 'warn');
-                        if (self::send_html('[Integra Sentinel] Connessione assente: ' . $site['label'], $content) || $hook) {
+                        if (self::send_html('[Integra Sentinel] Il Client non invia dati: ' . $site['label'], $content) || $hook) {
                             $ack[$id]['offline_seen'] = (int) $site['last_seen'];
                         } else { $retry = true; }
                     } elseif ($hook) {
@@ -2287,7 +2292,7 @@ final class Integra_Sentinel_Master {
                 if (empty($r['ok'])) { $lines[] = ($pages[$idx]['label'] ?? 'Pagina') . ': ' . (($r['error'] ?? '') !== '' ? $r['error'] : 'HTTP ' . (int) ($r['code'] ?? 0)); }
             }
             $title = 'Sito non raggiungibile · ' . $site['label'];
-            $text = 'Due controlli consecutivi falliti dal ' . wp_date('d/m H:i', $since) . '. ' . implode('; ', $lines);
+            $text = Integra_Sentinel_Probe::FAILS_FOR_ALERT . ' controlli consecutivi falliti dal ' . wp_date('d/m H:i', $since) . ', ognuno ripetuto due volte. ' . implode('; ', $lines);
             $tone = 'danger';
         } else {
             $minutes = max(1, (int) round((time() - $since) / MINUTE_IN_SECONDS));
@@ -2455,7 +2460,7 @@ final class Integra_Sentinel_Master {
     }
 
     public static function sn_state_label($state) {
-        return array('critical'=>'Priorità critica','risk'=>'Vulnerabilità note','review'=>'Verifica incompleta','clear'=>'Nessuna nota','offline'=>'Non collegato')[$state] ?? 'Da verificare';
+        return array('critical'=>'Priorità critica','risk'=>'Vulnerabilità note','review'=>'Verifica incompleta','clear'=>'Nessuna nota','offline'=>'Client senza dati')[$state] ?? 'Da verificare';
     }
 
     public static function sn_stat($number, $title, $sub, $tone = 'neutral') {
@@ -2486,9 +2491,13 @@ final class Integra_Sentinel_Master {
         if (!empty($metrics['integrity_count'])) {
             $problems[] = 'ALLARME INTEGRITÀ: ' . (int) $metrics['integrity_count'] . ' anomalie su file critici, uploads, DB o admin';
         }
-        if ($metrics['offline']) { $problems[] = 'Client non collegato o senza report da più di 36 ore'; }
+        if ($metrics['offline']) {
+            // Il Client muto non vuol dire sito spento: se le visite del Master riescono, lo si dice chiaramente.
+            $probe_ok = !empty((Integra_Sentinel_Probe::state()[$site['id'] ?? ''] ?? array())['last_ok']) && empty((Integra_Sentinel_Probe::state()[$site['id'] ?? ''] ?? array())['down_since']);
+            $problems[] = 'Il plugin Client non invia dati da più di 36 ore' . ($probe_ok ? ' (il sito invece è online e risponde ai controlli)' : '') . ': controlla il plugin sul sito';
+        }
         $probe = Integra_Sentinel_Probe::state()[$site['id'] ?? ''] ?? array();
-        if (!empty($probe['down_since']) && (int) ($probe['fails'] ?? 0) >= 2) {
+        if (!empty($probe['down_since']) && (int) ($probe['fails'] ?? 0) >= Integra_Sentinel_Probe::FAILS_FOR_ALERT) {
             $problems[] = 'Sito non raggiungibile dal ' . wp_date('d/m H:i', (int) $probe['down_since']);
         }
         if ($analysis && !empty($analysis['bottlenecks'])) {
@@ -2605,7 +2614,7 @@ final class Integra_Sentinel_Master {
             }
         }
         echo '<div class="sn-stats">';
-        self::sn_stat(count($sites), 'Siti monitorati', $states['offline'] ? $states['offline'] . ' non collegati' : 'tutti collegati', 'brand');
+        self::sn_stat(count($sites), 'Siti monitorati', $states['offline'] ? $states['offline'] . ' con il Client che non invia dati' : 'tutti i Client inviano dati', 'brand');
         self::sn_stat($with_findings, 'Siti con problemi di sicurezza', $affected . ' componenti vulnerabili · ' . $integrity_sum . ' anomalie sui file', $with_findings ? 'danger' : 'clear');
         self::sn_stat((int) $fleet['kpi']['ready'], 'Aggiornamenti pronti', 'si possono applicare subito, senza blocchi', 'ok');
         self::sn_stat($open_tasks, 'Interventi aperti', (int) ($task_counts['client'] ?? 0) . ' in attesa del cliente', 'neutral');
@@ -2626,7 +2635,7 @@ final class Integra_Sentinel_Master {
         echo '<section class="sn-section" id="sn-sites"><div class="sn-section-head"><div><h3>I tuoi siti</h3><p>Ordinati per priorità. Clicca su un sito per vedere cosa sistemare.</p></div><span class="sn-counter">' . count($sites) . ' totali</span></div>';
         if ($sites) {
             echo '<div class="sn-plugin-tools"><label class="sn-search"><span aria-hidden="true">⌕</span><input type="search" data-sn-site-search placeholder="Cerca un sito…" aria-label="Cerca un sito"></label><div class="sn-filters" aria-label="Filtra siti">';
-            foreach (array('all' => 'Tutti', 'fix' => 'Da sistemare', 'review' => 'Da verificare', 'offline' => 'Non collegati') as $key => $label) {
+            foreach (array('all' => 'Tutti', 'fix' => 'Da sistemare', 'review' => 'Da verificare', 'offline' => 'Client senza dati') as $key => $label) {
                 echo '<button type="button" class="sn-filter' . ($key === 'all' ? ' is-selected' : '') . '" data-sn-site-filter="' . esc_attr($key) . '" aria-pressed="' . ($key === 'all' ? 'true' : 'false') . '">' . self::e($label) . '</button>';
             }
             echo '</div>';

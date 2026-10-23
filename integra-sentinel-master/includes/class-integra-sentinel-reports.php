@@ -75,14 +75,14 @@ final class Integra_Sentinel_Reports {
             if ($draft['status'] === 'draft') { $html .= '<p class="note" style="border-left-color:#c58a12">Anteprima di una bozza non ancora approvata: il cliente non la vede finché non viene approvata.</p>'; }
             $html .= '<div class="story">' . Integra_Sentinel_AI::to_html($draft['body'], preg_match('/^#[0-9a-f]{6}$/i', (string) $b['color']) ? $b['color'] : '#0c8997') . '</div><h2>I numeri del mese</h2>';
         }
-        $html .= '<div class="kpis"><div class="kpi"><b>' . count($updates) . '</b><span>aggiornamenti applicati</span></div>'
+        $html .= '<div class="kpis"><div class="kpi"><b>' . count($updates) . '</b><span>' . (count($updates) === 1 ? 'aggiornamento applicato' : 'aggiornamenti applicati') . '</span></div>'
             . '<div class="kpi"><b>' . ($uptime ? self::e(number_format_i18n($uptime['pct'], 2)) . '%' : 'n.d.') . '</b><span>disponibilità del sito</span></div>'
-            . '<div class="kpi"><b>' . (int) $m['affected'] . '</b><span>componenti con vulnerabilità note oggi</span></div>'
-            . '<div class="kpi"><b>' . ($integrity ? $integrity : '0') . '</b><span>anomalie di integrità oggi</span></div></div>';
+            . '<div class="kpi"><b>' . (int) $m['affected'] . '</b><span>' . ((int) $m['affected'] === 1 ? 'componente con vulnerabilità note oggi' : 'componenti con vulnerabilità note oggi') . '</span></div>'
+            . '<div class="kpi"><b>' . ($integrity ? $integrity : '0') . '</b><span>' . ($integrity === 1 ? 'anomalia di integrità oggi' : 'anomalie di integrità oggi') . '</span></div></div>';
         $parts = array();
-        $parts[] = count($updates) ? 'Nel mese abbiamo applicato ' . count($updates) . ' aggiornamenti tra WordPress, plugin e temi.' : 'Nel mese non sono stati registrati aggiornamenti di versione.';
+        $parts[] = count($updates) ? (count($updates) === 1 ? 'Nel mese abbiamo applicato 1 aggiornamento.' : 'Nel mese abbiamo applicato ' . count($updates) . ' aggiornamenti tra WordPress, plugin e temi.') : 'Nel mese non sono stati registrati aggiornamenti di versione.';
         if ($uptime) { $parts[] = 'Il sito ha risposto correttamente nel ' . number_format_i18n($uptime['pct'], 2) . '% dei ' . (int) $uptime['checks'] . ' controlli (tempo medio ' . (int) $uptime['ms'] . ' ms).'; }
-        $parts[] = $m['affected'] ? 'Restano ' . (int) $m['affected'] . ' componenti con vulnerabilità note: sono indicati qui sotto con le azioni previste.' : 'Ad oggi non risultano vulnerabilità note applicabili alle versioni installate.';
+        $parts[] = $m['affected'] ? ((int) $m['affected'] === 1 ? 'Resta 1 componente con vulnerabilità note, indicato qui sotto.' : 'Restano ' . (int) $m['affected'] . ' componenti con vulnerabilità note, indicati qui sotto.') : 'Ad oggi non risultano vulnerabilità note applicabili alle versioni installate.';
         $html .= '<div class="note">' . self::e(implode(' ', $parts)) . '</div>';
 
         $html .= '<h2>Aggiornamenti applicati</h2>';
@@ -97,9 +97,15 @@ final class Integra_Sentinel_Reports {
             foreach (array_reverse($installed) as $e) { $html .= '<li>' . self::e(wp_date('d/m/Y', (int) $e['at']) . ' · ' . $e['message']) . '</li>'; }
             $html .= '</ul>';
         }
+        $notes = self::site_component_notes($site);
+        if ($notes) {
+            $html .= '<h2>Situazione di alcuni componenti</h2><table><thead><tr><th>Componente</th><th>Nota</th></tr></thead><tbody>';
+            foreach ($notes as $n) { $html .= '<tr><td style="width:34%"><strong>' . self::e($n['componente']) . '</strong><br><small style="color:#5c6e80">' . self::e(ucfirst($n['tipo']) . ($n['versione_installata'] !== '' ? ' · versione ' . $n['versione_installata'] : '')) . '</small></td><td>' . self::e($n['nota']) . '</td></tr>'; }
+            $html .= '</tbody></table>';
+        }
         $html .= '<h2>Sicurezza e stato tecnico</h2><table><tbody>';
-        $html .= '<tr><td>Monitoraggio vulnerabilità</td><td>' . ($m['affected'] ? self::pill($m['affected'] . ' componenti da correggere', 'bad') : self::pill('Nessuna vulnerabilità nota', 'ok')) . '</td></tr>';
-        $html .= '<tr><td>Integrità dei file e amministratori</td><td>' . ($integrity ? self::pill($integrity . ' anomalie in verifica', 'bad') : self::pill('Nessuna anomalia', 'ok')) . '</td></tr>';
+        $html .= '<tr><td>Monitoraggio vulnerabilità</td><td>' . ($m['affected'] ? self::pill($m['affected'] . ((int) $m['affected'] === 1 ? ' componente da correggere' : ' componenti da correggere'), 'bad') : self::pill('Nessuna vulnerabilità nota', 'ok')) . '</td></tr>';
+        $html .= '<tr><td>Integrità dei file e amministratori</td><td>' . ($integrity ? self::pill($integrity . ($integrity === 1 ? ' anomalia in verifica' : ' anomalie in verifica'), 'bad') : self::pill('Nessuna anomalia', 'ok')) . '</td></tr>';
         if (!empty($r['wp'])) { $html .= '<tr><td>WordPress</td><td>' . self::e($r['wp']) . (!empty($r['core_update']) ? ' · disponibile ' . self::e($r['core_update']) : ' · aggiornato') . '</td></tr>'; }
         if (!empty($r['php'])) { $html .= '<tr><td>PHP</td><td>' . self::e(Integra_Sentinel_EOL::sentence('php', $r['php'])) . '</td></tr>'; }
         if (isset($site['ssl_days_left']) && is_int($site['ssl_days_left'])) { $html .= '<tr><td>Certificato HTTPS</td><td>' . ($site['ssl_days_left'] < 14 ? self::pill('Scade tra ' . $site['ssl_days_left'] . ' giorni', 'warn') : self::pill('Valido (' . $site['ssl_days_left'] . ' giorni)', 'ok')) . '</td></tr>'; }
@@ -113,15 +119,6 @@ final class Integra_Sentinel_Reports {
             $html .= '<h2>Interruzioni rilevate</h2><table><thead><tr><th>Inizio</th><th>Durata stimata</th><th>Dettaglio</th></tr></thead><tbody>';
             foreach ($incidents as $i) { $html .= '<tr><td>' . self::e(wp_date('d/m/Y H:i', $i['from'])) . '</td><td>' . self::e(self::duration($i['to'] - $i['from'])) . '</td><td>' . self::e($i['error']) . '</td></tr>'; }
             $html .= '</tbody></table>';
-        }
-        if ($a) {
-            $next = array_slice($a['bottlenecks'], 0, 8);
-            if ($next) {
-                $html .= '<h2>Prossimi passi consigliati</h2><table><thead><tr><th>Intervento</th><th>Chi</th></tr></thead><tbody>';
-                $owners = Integra_Sentinel_Fleet::owners();
-                foreach ($next as $b) { $html .= '<tr><td><strong>' . self::e($b['title']) . '</strong><br>' . self::e($b['action']) . '</td><td>' . self::e($owners[$b['owner']] ?? 'Agenzia') . '</td></tr>'; }
-                $html .= '</tbody></table>';
-            }
         }
         return self::shell('Report di manutenzione', $site['label'] . ' · ' . ucfirst($period['label']), $html);
     }
@@ -252,6 +249,7 @@ final class Integra_Sentinel_Reports {
             'interventi_completati' => $tasks,
             'aggiornamenti_non_ancora_applicati' => $pending,
             'vulnerabilita_note_ancora_presenti' => $vulnerable,
+            'note_fisse_sui_componenti' => self::site_component_notes($site),
             'azioni_richieste_al_cliente' => $client_actions,
             'azioni_richieste_all_hosting' => $hosting_actions,
             'disponibilita' => $uptime ? array('percentuale' => round((float) $uptime['pct'], 2), 'controlli' => (int) $uptime['checks'], 'tempo_medio_risposta_ms' => (int) $uptime['ms'], 'interruzioni' => $incidents) : null,
@@ -288,6 +286,61 @@ final class Integra_Sentinel_Reports {
         }
         Integra_Sentinel_Store::draft_save($site['id'], $period['ym'], array('body' => $result['text'], 'notes' => $notes, 'status' => 'draft', 'model' => $result['model']));
         return $result;
+    }
+
+    /* ---------- Note fisse sui componenti: spiegazioni dell'agenzia che valgono in tutti i report ---------- */
+
+    const NOTES = 'integra_sentinel_component_notes';
+
+    /** "sito|tipo|slug" => nota; sito "*" = valida per tutti i siti. */
+    public static function component_notes() {
+        $notes = get_option(self::NOTES, array());
+        return is_array($notes) ? $notes : array();
+    }
+
+    /** Nota per un componente di un sito: prima quella del sito, poi quella valida per tutti. Ritorna text, fleet. */
+    public static function component_note($site_id, $type, $slug) {
+        $notes = self::component_notes();
+        if (isset($notes[$site_id . '|' . $type . '|' . $slug])) { return array('text' => $notes[$site_id . '|' . $type . '|' . $slug], 'fleet' => false); }
+        if (isset($notes['*|' . $type . '|' . $slug])) { return array('text' => $notes['*|' . $type . '|' . $slug], 'fleet' => true); }
+        return array('text' => '', 'fleet' => false);
+    }
+
+    /**
+     * Salva le note di un sito. $rows: "tipo:slug" => array(text, fleet).
+     * Con "per tutti i siti" la nota diventa comune e quella del sito sparisce; senza, si salva sul sito solo se diversa da quella comune.
+     */
+    public static function save_component_notes($site_id, $rows) {
+        return Integra_Sentinel_Master::mutate_option(self::NOTES, function($notes) use ($site_id, $rows) {
+            foreach ((array) $rows as $key => $row) {
+                if (!preg_match('/^(plugin|theme):([a-z0-9_-]{1,120})$/', (string) $key, $m)) { continue; }
+                $text = substr(sanitize_textarea_field((string) ($row['text'] ?? '')), 0, 600);
+                $mine = $site_id . '|' . $m[1] . '|' . $m[2];
+                $all = '*|' . $m[1] . '|' . $m[2];
+                if (!empty($row['fleet'])) {
+                    unset($notes[$mine]);
+                    if ($text === '') { unset($notes[$all]); } else { $notes[$all] = $text; }
+                } elseif ($text === '' || $text === (string) ($notes[$all] ?? '')) {
+                    unset($notes[$mine]);
+                } else {
+                    $notes[$mine] = $text;
+                }
+            }
+            return array_slice($notes, -3000, null, true);
+        });
+    }
+
+    /** Componenti installati con una nota: per i fatti dell'IA e per il report mensile. */
+    public static function site_component_notes($site) {
+        $out = array();
+        $r = (array) ($site['report'] ?? array());
+        foreach (array('plugin' => (array) ($r['plugins'] ?? array()), 'theme' => (array) ($r['themes'] ?? array())) as $type => $items) {
+            foreach ($items as $c) {
+                $note = self::component_note((string) $site['id'], $type, (string) ($c['slug'] ?? ''));
+                if ($note['text'] !== '') { $out[] = array('componente' => (string) $c['name'], 'tipo' => $type === 'theme' ? 'tema' : 'plugin', 'versione_installata' => (string) ($c['version'] ?? ''), 'nota' => $note['text']); }
+            }
+        }
+        return $out;
     }
 
     /* ---------- Bozze di tutti i siti: coda lavorata a piccoli lotti dal cron ---------- */
@@ -397,7 +450,8 @@ final class Integra_Sentinel_Reports {
     private static function duration($seconds) {
         $seconds = max(0, (int) $seconds);
         if ($seconds < 3600) { return max(1, (int) round($seconds / 60)) . ' min'; }
-        return floor($seconds / 3600) . ' h ' . (int) round(($seconds % 3600) / 60) . ' min';
+        $minutes = (int) round(($seconds % 3600) / 60);
+        return floor($seconds / 3600) . ' h' . ($minutes ? ' ' . $minutes . ' min' : '');
     }
 
     /** Audit di presa in carico di un sito ereditato: rischi, colli di bottiglia e stima delle ore. */

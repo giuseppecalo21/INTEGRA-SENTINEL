@@ -85,6 +85,7 @@ final class Integra_Sentinel_Admin {
             'drafts_queued' => array('Bozze in preparazione: l’IA le scrive in sottofondo, un paio alla volta. Riceverai un avviso quando sono pronte.', 'success'),
             'drafts_none' => array('Nessuna bozza da preparare: tutti i siti con un inventario hanno già un resoconto per questo mese (o l’IA non è configurata).', 'warning'),
             'drafts_cancelled' => array('Preparazione delle bozze interrotta. Le bozze già scritte restano.', 'success'),
+            'component_notes' => array('Spiegazioni salvate: compariranno nei report di questo sito.', 'success'),
             'event_note' => array('Motivo salvato: verrà usato nel resoconto per il cliente.', 'success'),
             'draft_approved' => array('Resoconto approvato: ora compare nel report mensile e nell’email al cliente.', 'success'),
             'daily' => array('Andamenti, promemoria e interventi ricalcolati.', 'success'),
@@ -667,6 +668,15 @@ final class Integra_Sentinel_Admin {
                 wp_clear_scheduled_hook(Integra_Sentinel_Reports::HOOK_QUEUE);
                 Integra_Sentinel_Store::log('drafts_queue', 'interrotta');
                 self::back('drafts_cancelled');
+            case 'component_notes':
+                if (!isset($sites[$site_id])) { self::back('invalid'); }
+                $rows = array();
+                foreach ((array) self::post('cnotes', array()) as $key => $row) {
+                    $rows[sanitize_text_field((string) $key)] = array('text' => (string) ($row['text'] ?? ''), 'fleet' => !empty($row['fleet']));
+                }
+                $ok = Integra_Sentinel_Reports::save_component_notes($site_id, $rows);
+                if ($ok) { Integra_Sentinel_Store::log('component_notes', 'spiegazioni sui componenti salvate', $site_id); }
+                self::back($ok ? 'component_notes' : 'busy');
             case 'event_note':
                 $event = Integra_Sentinel_Store::event_get(absint(self::post('id')));
                 if (!$event) { self::back('invalid'); }

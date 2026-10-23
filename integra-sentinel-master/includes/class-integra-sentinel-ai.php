@@ -176,6 +176,8 @@ final class Integra_Sentinel_AI {
             'Le note dell’agenzia sono informazioni affidabili scritte dal tecnico: usale e riformulale in modo chiaro, senza aggiungere dettagli.',
             'Formato: testo semplice con titoli di sezione preceduti da "## " ed elenchi con "- ". Nessun saluto iniziale, nessuna firma, nessuna tabella, nessun emoji. Lunghezza indicativa: 200-450 parole. Non elencare tutte le versioni se sono molte: raggruppa e privilegia ciò che interessa al cliente.',
             'Sezioni, nell’ordine (ometti quelle senza contenuto): "## Il mese in breve" (2-3 frasi), "## Cosa abbiamo fatto", "## Cosa resta da fare e perché", "## Cosa serve da parte ' . $yours . '" (solo se ci sono azioni a carico del cliente), "## Sicurezza e disponibilità del sito".',
+            'Non dare consigli né raccomandazioni al cliente: il lavoro tecnico lo fa l’agenzia, il cliente vuole sapere com’è la situazione. Descrivi lo stato delle cose; chiedi qualcosa al cliente solo se compare in "azioni_richieste_al_cliente". Per le questioni dell’hosting scrivi che ce ne occupiamo con il fornitore solo se lo dicono le note dell’agenzia, altrimenti descrivi soltanto la situazione.',
+            'Le "note_fisse_sui_componenti" sono spiegazioni dell’agenzia sulla situazione di singoli plugin o temi (per esempio perché non si possono aggiornare): sono affidabili, riportale con parole chiare nella sezione più adatta, di solito "Cosa resta da fare e perché" o una sezione "## Situazione di alcuni componenti".',
             'Tono: professionale, rassicurante ma onesto. Non minimizzare i problemi aperti e non creare allarmismi.',
         );
         if ($c['style'] !== '') { $rules[] = 'Indicazioni di stile dell’agenzia: ' . $c['style']; }

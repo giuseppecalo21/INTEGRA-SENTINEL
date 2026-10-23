@@ -64,7 +64,7 @@ final class Integra_Sentinel_Intel {
                 'options' => array(
                     'timeout' => $timeout,
                     'connect_timeout' => min(10.0, $timeout),
-                    'useragent' => 'IntegraSentinel/' . Integra_Sentinel_Master::VERSION . ' (+' . home_url('/') . ')',
+                    'useragent' => (string) ($r['useragent'] ?? ('IntegraSentinel/' . Integra_Sentinel_Master::VERSION . ' (+' . home_url('/') . ')')),
                     'follow_redirects' => !empty($r['redirects']),
                     'redirects' => (int) ($r['redirects'] ?? 0),
                     'verify' => is_readable($ca) ? $ca : true,
