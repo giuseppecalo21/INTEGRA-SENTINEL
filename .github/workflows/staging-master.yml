@@ -1,0 +1,84 @@
+# Carica il plugin Master sullo staging via SSH (rsync) a ogni push che lo modifica,
+# oppure a mano da Actions → "Staging del Master" → Run workflow (scegliendo il branch).
+#
+# Secrets del repository (Settings → Secrets and variables → Actions):
+#   STAGING_SSH_HOST        server SSH (es. il nome del server indicato da cPanel)
+#   STAGING_SSH_PORT        porta SSH (facoltativo, predefinita 22)
+#   STAGING_SSH_USER        utente cPanel
+#   STAGING_SSH_KEY         chiave PRIVATA, testo completo dalla riga BEGIN alla riga END
+#   STAGING_SSH_PASSPHRASE  password della chiave (facoltativo, solo se la chiave ne ha una)
+#   STAGING_PATH            cartella del plugin sul server, deve finire con /wp-content/plugins/integra-sentinel-master
+#
+# Finche' i secrets non ci sono il workflow non carica nulla e termina senza errori.
+
+name: Staging del Master
+
+on:
+  push:
+    paths:
+      - 'integra-sentinel-master/**'
+      - '.github/workflows/staging-master.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: staging-master
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
+      SSH_PORT: ${{ secrets.STAGING_SSH_PORT }}
+      SSH_USER: ${{ secrets.STAGING_SSH_USER }}
+      SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+      SSH_PASSPHRASE: ${{ secrets.STAGING_SSH_PASSPHRASE }}
+      REMOTE_PATH: ${{ secrets.STAGING_PATH }}
+    steps:
+      - name: Secrets presenti?
+        id: cfg
+        run: |
+          if [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_KEY" ] || [ -z "$REMOTE_PATH" ]; then
+            echo "Secrets dello staging non ancora inseriti: nessun caricamento." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ready == 'true'
+
+      - name: Controlli prima del caricamento
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          # Con --delete un percorso sbagliato cancellerebbe altro: si accetta solo la cartella del plugin.
+          case "${REMOTE_PATH%/}" in
+            */wp-content/plugins/integra-sentinel-master) ;;
+            *) echo "STAGING_PATH deve finire con /wp-content/plugins/integra-sentinel-master"; exit 1 ;;
+          esac
+          # Un errore di sintassi PHP manderebbe in errore lo staging: meglio fermarsi qui.
+          find integra-sentinel-master -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: Chiave SSH
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/staging
+          chmod 600 ~/.ssh/staging
+          if [ -n "$SSH_PASSPHRASE" ]; then ssh-keygen -p -P "$SSH_PASSPHRASE" -N '' -f ~/.ssh/staging > /dev/null; fi
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2> /dev/null
+
+      - name: Caricamento sullo staging
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          rsync -rlz --checksum --delete --exclude '.git*' \
+            -e "ssh -i $HOME/.ssh/staging -p ${SSH_PORT:-22} -o IdentitiesOnly=yes" \
+            integra-sentinel-master/ "$SSH_USER@$SSH_HOST:${REMOTE_PATH%/}/"
+          echo "Plugin caricato dal branch ${GITHUB_REF_NAME} (${GITHUB_SHA::7})." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Pulizia
+        if: always()
+        run: rm -f ~/.ssh/staging
