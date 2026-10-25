@@ -3,7 +3,7 @@
  * Plugin Name: Integra Sentinel Master
  * Plugin URI: https://integracorporate.it/
  * Description: Centrale privata in sola lettura per aggiornamenti, colli di bottiglia, licenze, dipendenze, vulnerabilita CVE e integrita anti-intrusione dei siti WordPress gestiti da Integra.
- * Version: 1.9.2
+ * Version: 1.9.3
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: Integra
@@ -29,12 +29,13 @@ require_once __DIR__ . '/includes/class-integra-sentinel-probe.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-jobs.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-ai.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-reports.php';
+require_once __DIR__ . '/includes/class-integra-sentinel-checklist.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-admin.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-admin-pages.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-cli.php';
 
 final class Integra_Sentinel_Master {
-    const VERSION = '1.9.2';
+    const VERSION = '1.9.3';
     const SITES = 'integra_sentinel_master_sites';
     const FEEDS = 'integra_sentinel_master_feeds';
     const MAIL = 'integra_sentinel_master_email';
@@ -490,10 +491,7 @@ final class Integra_Sentinel_Master {
             'ring' => max(0, min(3, (int) ($input['ring'] ?? 2))),
             'tags' => array_slice(array_keys($tags), 0, 12),
             'contract' => $field('contract', 60),
-            'hosting' => $field('hosting', 80),
-            'panel_url' => self::safe_link(isset($input['panel_url']) ? (string) wp_unslash($input['panel_url']) : ''),
             'window' => $field('window', 80),
-            'hosting_backup' => !empty($input['hosting_backup']),
             'probe_off' => !empty($input['probe_off']),
             'home_expect' => $field('home_expect', 120),
             'pages' => $pages,
@@ -501,7 +499,8 @@ final class Integra_Sentinel_Master {
         );
         return self::mutate_sites(function($current) use ($id, $meta) {
             if (!isset($current[$id])) { return null; }
-            $current[$id]['meta'] = $meta;
+            // Hosting, backup e checklist si salvano dalla checklist di manutenzione: qui restano come sono.
+            $current[$id]['meta'] = array_merge((array) ($current[$id]['meta'] ?? array()), $meta);
             return $current;
         });
     }
@@ -2578,6 +2577,7 @@ final class Integra_Sentinel_Master {
         $cache = (array) get_option(self::FEEDS, array());
         $all = array(); $states = array('critical'=>0,'risk'=>0,'review'=>0,'clear'=>0,'offline'=>0);
         $alerts = 0; $affected = 0; $integrity_sum = 0; $with_findings = 0; $hotspots = array(); $tags = array();
+        $checklists = array('ok' => 0, 'warn' => 0, 'danger' => 0, 'muted' => 0);
         foreach ($sites as $id => $site) {
             $m = self::sn_metrics($site, $cache);
             $all[$id] = array('site'=>$site,'m'=>$m);
@@ -2585,6 +2585,8 @@ final class Integra_Sentinel_Master {
             $alerts += $m['vulnerabilities']; $affected += $m['affected']; $integrity_sum += $m['integrity_count'];
             if ($m['affected'] || $m['integrity_count']) { ++$with_findings; }
             foreach ((array) ($site['meta']['tags'] ?? array()) as $tag) { $tags[$tag] = true; }
+            $all[$id]['checklist'] = Integra_Sentinel_Checklist::summary($site);
+            ++$checklists[$all[$id]['checklist']['tone']];
             foreach ($m['groups'] as $g) {
                 $key = $g['key'];
                 if (!isset($hotspots[$key])) { $hotspots[$key] = array('name'=>$g['name'],'sites'=>array(),'count'=>0,'tier'=>'unknown'); }
@@ -2632,10 +2634,10 @@ final class Integra_Sentinel_Master {
         echo '</section>';
         Integra_Sentinel_Admin::trends($fleet);
         echo '</div>';
-        echo '<section class="sn-section" id="sn-sites"><div class="sn-section-head"><div><h3>I tuoi siti</h3><p>Ordinati per priorità. Clicca su un sito per vedere cosa sistemare.</p></div><span class="sn-counter">' . count($sites) . ' totali</span></div>';
+        echo '<section class="sn-section" id="sn-sites"><div class="sn-section-head"><div><h3>I tuoi siti</h3><p>Ordinati per priorità. Clicca su un sito per vedere cosa sistemare.' . ($sites ? ' Checklist di manutenzione completa su ' . (int) $checklists['ok'] . ' ' . ($checklists['ok'] === 1 ? 'sito' : 'siti') . ' di ' . count($sites) . ($checklists['danger'] ? ', con voci mancanti su ' . (int) $checklists['danger'] : '') . ($checklists['muted'] ? ', da compilare su ' . (int) $checklists['muted'] : '') . '.' : '') . '</p></div><span class="sn-counter">' . count($sites) . ' totali</span></div>';
         if ($sites) {
             echo '<div class="sn-plugin-tools"><label class="sn-search"><span aria-hidden="true">⌕</span><input type="search" data-sn-site-search placeholder="Cerca un sito…" aria-label="Cerca un sito"></label><div class="sn-filters" aria-label="Filtra siti">';
-            foreach (array('all' => 'Tutti', 'fix' => 'Da sistemare', 'review' => 'Da verificare', 'offline' => 'Client senza dati') as $key => $label) {
+            foreach (array('all' => 'Tutti', 'fix' => 'Da sistemare', 'review' => 'Da verificare', 'offline' => 'Client senza dati', 'checklist' => 'Checklist incompleta') as $key => $label) {
                 echo '<button type="button" class="sn-filter' . ($key === 'all' ? ' is-selected' : '') . '" data-sn-site-filter="' . esc_attr($key) . '" aria-pressed="' . ($key === 'all' ? 'true' : 'false') . '">' . self::e($label) . '</button>';
             }
             echo '</div>';
@@ -2655,12 +2657,14 @@ final class Integra_Sentinel_Master {
             $issues = self::sn_site_issues($site, $m, $analysis);
             $coverage = $m['coverage']; $cov_text = $coverage['total'] ? $coverage['ok'] . '/' . $coverage['total'] : '—';
             $meta = (array) ($site['meta'] ?? array());
-            $filters = $m['state'] . ((in_array($m['state'], array('critical', 'risk'), true) || ($s && $s['bottlenecks'])) ? ' fix' : '');
+            $cl = $entry['checklist'];
+            $filters = $m['state'] . ((in_array($m['state'], array('critical', 'risk'), true) || ($s && $s['bottlenecks'])) ? ' fix' : '') . ($cl['tone'] !== 'ok' ? ' checklist' : '');
             echo '<a class="sn-site-card sn-accent-' . esc_attr($m['state']) . '" href="' . esc_url(self::sn_admin_url($id)) . '" data-sn-state="' . esc_attr($filters) . '" data-sn-tags="' . esc_attr(implode(' ', (array) ($meta['tags'] ?? array()))) . '" data-sn-name="' . esc_attr(strtolower($site['label'] . ' ' . $site['url'])) . '">';
             echo '<div class="sn-site-head"><div><h4>' . self::e($site['label']) . '</h4><span class="sn-domain">' . self::e($site['url']) . '</span></div>' . self::sn_badge(self::sn_state_label($m['state']), $m['state']) . '</div>';
             echo '<div class="sn-site-numbers"><div><strong>' . ($m['affected'] + $m['integrity_count']) . '</strong><span>problemi di sicurezza</span></div><div><strong>' . ($s ? (int) $s['ready'] : $m['updates']) . '</strong><span>' . ($s ? 'aggiornamenti pronti' : 'aggiornamenti') . '</span></div><div><strong>' . ($s ? (int) $s['bottlenecks'] : 0) . '</strong><span>cose che bloccano</span></div></div>';
             if ($issues) { echo '<p class="sn-site-issue">' . self::e($issues[0]) . '</p>'; }
             else { echo '<p class="sn-site-issue sn-site-issue-muted">Nessun problema aggiuntivo prioritario rilevato.</p>'; }
+            echo '<p class="sn-site-checklist">' . self::sn_badge('Checklist ' . ($cl['tone'] === 'muted' ? 'da compilare' : (int) $cl['ok'] . '/' . (int) $cl['total']), $cl['tone']) . ($cl['tone'] !== 'muted' ? '<span>' . self::e($cl['text']) . '</span>' : '') . '</p>';
             $ssl_tag = isset($site['ssl_days_left']) && is_int($site['ssl_days_left']) ? ' · SSL ' . $site['ssl_days_left'] . 'gg' : '';
             $tag_text = !empty($meta['tags']) ? ' · #' . implode(' #', (array) $meta['tags']) : '';
             echo '<div class="sn-site-footer"><span>WP ' . self::e($r['wp'] ?? '—') . ' · PHP ' . self::e($r['php'] ?? '—') . self::e($ssl_tag . $tag_text) . '</span><span>API ' . self::e($cov_text) . ' ↗</span></div></a>';
@@ -2984,7 +2988,9 @@ final class Integra_Sentinel_Master {
         foreach ((array) ($meta['tags'] ?? array()) as $tag) { $chips .= self::sn_badge('#' . $tag, 'muted') . ' '; }
         if (isset($meta['ring'])) { $chips .= self::sn_badge('Ondata ' . (int) $meta['ring'], 'brand') . ' '; }
         if (!empty($meta['contract'])) { $chips .= self::sn_badge($meta['contract'], 'premium') . ' '; }
-        if (!empty($meta['panel_url'])) { $chips .= '<a class="sn-linkbtn" href="' . esc_url($meta['panel_url']) . '" target="_blank" rel="noopener noreferrer">Pannello hosting' . (!empty($meta['hosting']) ? ' · ' . self::e($meta['hosting']) : '') . ' ↗</a>'; }
+        if (!empty($meta['panel_url'])) { $chips .= '<a class="sn-linkbtn" href="' . esc_url($meta['panel_url']) . '" target="_blank" rel="noopener noreferrer">Pannello hosting' . (!empty($meta['hosting']) ? ' · ' . self::e($meta['hosting']) : '') . ' ↗</a> '; }
+        $checklist = Integra_Sentinel_Checklist::summary($site);
+        $chips .= '<a class="sn-badge sn-' . esc_attr($checklist['tone']) . '" href="#sn-checklist">Checklist ' . ($checklist['tone'] === 'muted' ? 'da compilare' : (int) $checklist['ok'] . '/' . (int) $checklist['total']) . '</a>';
         echo '<section class="sn-page-heading sn-detail-title"><div><p class="sn-kicker">DETTAGLIO SITO</p><h2>' . self::e($site['label']) . '</h2><p><a href="' . esc_url($site['url']) . '" target="_blank" rel="noopener noreferrer">' . self::e($site['url']) . ' ↗</a> · Ultimo report ' . (!empty($site['last_seen']) ? self::e(wp_date('d/m/Y H:i', (int) $site['last_seen'])) : 'mai ricevuto') . (!empty($r['client_version']) ? ' · Client v' . self::e($r['client_version']) : '') . '</p>'
             . ($chips !== '' ? '<p class="sn-detail-chips">' . $chips . '</p>' : '') . '</div><div class="sn-detail-actions">' . self::sn_badge(self::sn_state_label($m['state']), $m['state'])
             . ($r ? '<a class="button" target="_blank" rel="noopener" href="' . esc_url(Integra_Sentinel_Admin::document_url('monthly', $site['id'], $prev_month)) . '">Report mensile ↗</a><a class="button" target="_blank" rel="noopener" href="' . esc_url(Integra_Sentinel_Admin::document_url('onboarding', $site['id'])) . '">Audit di presa in carico ↗</a>' : '') . '</div></section>';
@@ -2996,6 +3002,7 @@ final class Integra_Sentinel_Master {
                 echo '<p><button class="button button-primary" type="submit">Genera codice di abbinamento</button></p></form>';
             }
             echo '</div>';
+            Integra_Sentinel_Checklist::panel($site);
             Integra_Sentinel_Admin_Pages::site_meta_form($site);
             if ($admin) { echo '<details class="sn-config sn-panel"><summary><strong>Gestione sito</strong></summary><div class="sn-actions">'; self::button('rotate', 'Rigenera chiave', $site['id']); self::button('delete', 'Rimuovi sito', $site['id']); echo '</div></details>'; }
             return;
@@ -3033,6 +3040,9 @@ final class Integra_Sentinel_Master {
         $warnings = array_values(array_filter(self::sn_site_issues($site, $m, $analysis), function($w) use ($platform) {
             return strpos($w, 'Blocca gli aggiornamenti: ') !== 0 && strpos($w, 'Patch di sicurezza bloccata: ') !== 0 && !($platform && strpos($w, 'PHP ') === 0);
         }));
+        if ($checklist['missing']) {
+            $warnings[] = 'Checklist di manutenzione, voci mancanti: ' . implode(', ', array_slice(array_map('lcfirst', $checklist['missing_labels']), 0, 4)) . (count($checklist['missing_labels']) > 4 ? '…' : '');
+        }
         if ($warnings) {
             echo '<div class="sn-warning-panel"><h3>Da sapere</h3><ul>';
             foreach ($warnings as $warning) { echo '<li>' . self::e($warning) . '</li>'; }
@@ -3098,6 +3108,7 @@ final class Integra_Sentinel_Master {
         echo '</div><p class="sn-no-results" id="sn-no-results" hidden>Nessun plugin corrisponde alla ricerca o al filtro scelto.</p></section>';
         self::sn_recent_changes($site);
         Integra_Sentinel_Admin_Pages::requests_panel($site);
+        Integra_Sentinel_Checklist::panel($site, $analysis);
         Integra_Sentinel_Admin_Pages::probe_panel($site);
 
         // Dettagli tecnici: tutto cio' che serve per indagare, chiuso per non affollare la scheda.

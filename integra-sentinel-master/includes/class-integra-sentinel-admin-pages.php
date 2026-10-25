@@ -669,11 +669,11 @@ final class Integra_Sentinel_Admin_Pages {
 
     /* ---------- Pannelli della scheda sito ---------- */
 
-    /** Scheda cliente: contatti, ondata, tag, hosting, finestra di manutenzione e pagine chiave da controllare. */
+    /** Scheda cliente: contatti, ondata, tag, finestra di manutenzione e pagine chiave da controllare (l'hosting e' nella checklist). */
     public static function site_meta_form($site) {
         $meta = (array) ($site['meta'] ?? array());
         $pages = array_values((array) ($meta['pages'] ?? array()));
-        echo '<details class="sn-panel sn-config" id="sn-meta"><summary><span><strong>Scheda cliente</strong><small>Contatti, ondata di aggiornamento, tag, hosting, finestra di manutenzione e pagine chiave da controllare</small></span><span class="sn-chevron">⌄</span></summary><div class="sn-config-body">';
+        echo '<details class="sn-panel sn-config" id="sn-meta"><summary><span><strong>Scheda cliente</strong><small>Contatti, ondata di aggiornamento, tag, finestra di manutenzione e pagine chiave da controllare</small></span><span class="sn-chevron">⌄</span></summary><div class="sn-config-body">';
         if (!Integra_Sentinel_Settings::can_manage()) { echo '<p class="sn-muted">Sola visione.</p></div></details>'; return; }
         Integra_Sentinel_Admin::form_start('site_meta', 'integra-sentinel', array('site_id' => $site['id'], '_sn_site' => $site['id'], '_sn_anchor' => 'sn-meta'));
         echo '<div class="sn-form-grid">';
@@ -684,10 +684,7 @@ final class Integra_Sentinel_Admin_Pages {
         echo '</select></label>';
         echo '<label>Tag (separati da virgola)<input type="text" name="tags" value="' . esc_attr(implode(', ', (array) ($meta['tags'] ?? array()))) . '" placeholder="ecommerce, contratto-pro"></label>';
         echo '<label>Contratto<input type="text" name="contract" maxlength="60" value="' . esc_attr($meta['contract'] ?? '') . '" placeholder="Manutenzione Pro"></label>';
-        echo '<label>Hosting<input type="text" name="hosting" maxlength="80" value="' . esc_attr($meta['hosting'] ?? '') . '"></label>';
-        echo '<label>Pannello dell’hosting (link, mai credenziali)<input type="url" name="panel_url" value="' . esc_attr($meta['panel_url'] ?? '') . '"></label>';
         echo '<label>Finestra di manutenzione<input type="text" name="window" maxlength="80" value="' . esc_attr($meta['window'] ?? '') . '" placeholder="mar–gio 8:00–10:00"></label>';
-        echo '<label class="sn-inline-check"><input type="checkbox" name="hosting_backup" value="1"' . checked(!empty($meta['hosting_backup']), true, false) . '> Backup gestito dall’hosting</label>';
         echo '<label class="sn-inline-check"><input type="checkbox" name="probe_off" value="1"' . checked(!empty($meta['probe_off']), true, false) . '> Non controllare la raggiungibilità di questo sito</label>';
         echo '<label class="sn-span-2">Testo che deve comparire nella home (facoltativo)<input type="text" name="home_expect" maxlength="120" value="' . esc_attr($meta['home_expect'] ?? '') . '" placeholder="es. il nome dell’azienda nel footer"></label>';
         echo '<fieldset class="sn-span-2"><legend>Pagine chiave controllate insieme alla home (stesso dominio)</legend>';

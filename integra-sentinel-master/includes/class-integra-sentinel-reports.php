@@ -83,7 +83,12 @@ final class Integra_Sentinel_Reports {
         $parts[] = count($updates) ? (count($updates) === 1 ? 'Nel mese abbiamo applicato 1 aggiornamento.' : 'Nel mese abbiamo applicato ' . count($updates) . ' aggiornamenti tra WordPress, plugin e temi.') : 'Nel mese non sono stati registrati aggiornamenti di versione.';
         if ($uptime) { $parts[] = 'Il sito ha risposto correttamente nel ' . number_format_i18n($uptime['pct'], 2) . '% dei ' . (int) $uptime['checks'] . ' controlli (tempo medio ' . (int) $uptime['ms'] . ' ms).'; }
         $parts[] = $m['affected'] ? ((int) $m['affected'] === 1 ? 'Resta 1 componente con vulnerabilità note, indicato qui sotto.' : 'Restano ' . (int) $m['affected'] . ' componenti con vulnerabilità note, indicati qui sotto.') : 'Ad oggi non risultano vulnerabilità note applicabili alle versioni installate.';
+        // Prerequisiti da sistemare: in evidenza subito dopo il riepilogo, perche' spiegano cosa non si puo' ancora fare.
+        $checklist = Integra_Sentinel_Checklist::in_monthly($site) ? Integra_Sentinel_Checklist::summary($site) : null;
+        $checklist_top = $checklist && $checklist['missing'];
+        if ($checklist_top) { $parts[] = $checklist['missing'] === 1 ? 'Un prerequisito per la manutenzione è da sistemare: qui sotto spieghiamo cosa comporta.' : $checklist['missing'] . ' prerequisiti per la manutenzione sono da sistemare: qui sotto spieghiamo cosa comportano.'; }
         $html .= '<div class="note">' . self::e(implode(' ', $parts)) . '</div>';
+        if ($checklist_top) { $html .= Integra_Sentinel_Checklist::document_html($site, 'Accessi, backup e accordi che verifichiamo prima di intervenire sul sito. Le voci da sistemare indicano cosa non è ancora possibile fare.'); }
 
         $html .= '<h2>Aggiornamenti applicati</h2>';
         if (!$updates) { $html .= '<p class="sub">Nessun cambio di versione registrato nel periodo.</p>'; }
@@ -115,6 +120,9 @@ final class Integra_Sentinel_Reports {
             }
         }
         $html .= '</tbody></table>';
+        if ($checklist && !$checklist_top) {
+            $html .= Integra_Sentinel_Checklist::document_html($site, 'Accessi, backup e accordi che verifichiamo prima di intervenire sul sito.');
+        }
         if ($incidents) {
             $html .= '<h2>Interruzioni rilevate</h2><table><thead><tr><th>Inizio</th><th>Durata stimata</th><th>Dettaglio</th></tr></thead><tbody>';
             foreach ($incidents as $i) { $html .= '<tr><td>' . self::e(wp_date('d/m/Y H:i', $i['from'])) . '</td><td>' . self::e(self::duration($i['to'] - $i['from'])) . '</td><td>' . self::e($i['error']) . '</td></tr>'; }
@@ -491,6 +499,7 @@ final class Integra_Sentinel_Reports {
             . '<tr><td>Amministratori</td><td>' . count((array) ($r['security']['admins'] ?? array())) . '</td></tr>'
             . '<tr><td>Aggiornamenti disponibili</td><td>' . (int) $a['summary']['updates'] . ' (' . (int) $a['summary']['ready'] . ' applicabili subito, ' . (int) $a['summary']['blocked'] . ' bloccati)</td></tr>'
             . '</tbody></table>';
+        $html .= Integra_Sentinel_Checklist::document_html($site, 'Accessi, backup e accordi necessari per aggiornare il sito in sicurezza, con lo stato verificato alla data di questo audit. Le voci da sistemare indicano cosa non è ancora possibile fare.');
         $kinds = Integra_Sentinel_Fleet::kinds();
         $owners = Integra_Sentinel_Fleet::owners();
         $by_kind = array();
