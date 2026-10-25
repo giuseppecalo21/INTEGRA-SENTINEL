@@ -17,7 +17,7 @@ riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il
 * Ogni voce: Da verificare / Si', a posto / No, manca / Non serve, con una nota interna e la data e l'autore dell'ultima modifica. Niente credenziali: nelle note si scrive solo dove sono custodite.
 * Accanto alle voci che puo' confrontare Sentinel mostra cosa rileva dai dati del sito (plugin di backup, tema attivo, child theme, personalizzazioni, problemi di licenza).
 * Panoramica: su ogni sito il badge "Checklist 12/17", il riepilogo dei siti con checklist completa, con voci mancanti o da compilare e il filtro "Checklist incompleta". Nella scheda sito il badge in testata e le voci mancanti in "Da sapere".
-* Report mensile e audit di presa in carico: nuova sezione "Prerequisiti per la manutenzione" con lo stato di ogni voce (mai le note interne). Nel report mensile si puo' nascondere sito per sito; l'audit la mostra sempre.
+* Report mensile e audit di presa in carico: nuova sezione "Prerequisiti per la manutenzione" con lo stato di ogni voce (mai le note interne) e, sotto ogni voce da sistemare, cosa non si puo' fare finche' manca. Nel report mensile, se ci sono voci da sistemare, la sezione sale subito dopo il riepilogo del mese e il riepilogo lo dice; si puo' nascondere sito per sito. L'audit la mostra sempre. L'IA dei resoconti non la usa.
 * Hosting, link al pannello e "backup dell'hosting" passano dalla scheda cliente alla checklist (i dati gia' inseriti restano). Un backup giornaliero o settimanale segnato nella checklist vale anche per il controllo "Backup" di Sentinel.
 
 == 1.9.2 - 24 October 2026 ==

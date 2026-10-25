@@ -44,6 +44,28 @@ final class Integra_Sentinel_Checklist {
         );
     }
 
+    /** Per il cliente: cosa non si puo' fare finche' la voce e' da sistemare. */
+    public static function consequences() {
+        return array(
+            'hosting_account' => 'Senza l’area clienti non possiamo aprire richieste all’assistenza dell’hosting né recuperare i backup che conserva il fornitore.',
+            'panel' => 'Senza il pannello non possiamo cambiare la versione di PHP né gestire certificati, database e caselle email.',
+            'ftp' => 'Senza accesso ai file, se un aggiornamento manda il sito in errore e la bacheca non si apre non possiamo intervenire direttamente.',
+            'database' => 'Senza accesso al database non possiamo ripristinare o correggere i dati in caso di problemi.',
+            'wp_admin' => 'Senza un utente dedicato gli interventi sul sito non sono tracciabili.',
+            'domain' => 'Senza conoscere intestatario e scadenza del dominio non possiamo prevenire un mancato rinnovo, che spegnerebbe sito ed email.',
+            'dns' => 'Senza accesso ai DNS non possiamo gestire trasferimenti, certificati e configurazione delle email.',
+            'backup_daily' => 'Senza un backup giornaliero, un ripristino può far perdere il lavoro di più giorni.',
+            'backup_weekly' => 'Senza copie settimanali non si può tornare a una versione meno recente, utile quando un problema viene scoperto in ritardo.',
+            'backup_monthly' => 'Senza copie mensili non si può tornare a una versione di qualche settimana prima.',
+            'backup_offsite' => 'Se il server si guasta o viene compromesso, i backup salvati sullo stesso server si perdono con lui.',
+            'backup_restore' => 'Finché un ripristino non viene provato non c’è la certezza che i backup funzionino.',
+            'theme' => 'Il tema non si può aggiornare senza il rischio di perdere le modifiche fatte.',
+            'licenses' => 'Senza le licenze non possiamo scaricare gli aggiornamenti dei componenti a pagamento.',
+            'staging' => 'Senza una copia di prova gli aggiornamenti delicati vanno fatti direttamente sul sito pubblico.',
+            'gdpr' => 'L’accordo è richiesto dal GDPR per trattare i dati personali presenti sul sito.',
+        );
+    }
+
     public static function items() {
         $out = array();
         foreach (self::groups() as $group) { $out += $group['items']; }
@@ -219,12 +241,16 @@ final class Integra_Sentinel_Checklist {
         echo '</div></details>';
     }
 
-    /** Tabella per i documenti del cliente: solo stato, niente note interne. Le voci "non serve" non compaiono. */
+    /**
+     * Tabella per i documenti del cliente: solo stato, niente note interne. Le voci "non serve" non compaiono;
+     * sotto quelle da sistemare, cosa non si puo' fare finche' mancano.
+     */
     public static function document_html($site, $intro) {
         $sum = self::summary($site);
         if ($sum['tone'] === 'muted') { return ''; }
         $data = self::data($site);
         $labels = array('yes' => array('Verificato', 'ok'), 'no' => array('Da sistemare', 'bad'), '' => array('Da verificare', 'warn'));
+        $why = self::consequences();
         $html = '<h2>Prerequisiti per la manutenzione</h2><p class="sub">' . esc_html($intro) . '</p><table><tbody>';
         foreach (self::groups() as $group) {
             $rows = '';
@@ -232,7 +258,7 @@ final class Integra_Sentinel_Checklist {
                 $s = $data[$key]['s'];
                 if ($s === 'na') { continue; }
                 $value = $key === 'hosting' && $s === 'yes' ? esc_html($data[$key]['note']) : '<span class="pill ' . esc_attr($labels[$s][1]) . '">' . esc_html($labels[$s][0]) . '</span>';
-                $rows .= '<tr><td style="width:62%">' . esc_html($item[0]) . '</td><td>' . $value . '</td></tr>';
+                $rows .= '<tr><td style="width:62%">' . esc_html($item[0]) . ($s === 'no' && isset($why[$key]) ? '<br><small style="color:#a11f35">' . esc_html($why[$key]) . '</small>' : '') . '</td><td>' . $value . '</td></tr>';
             }
             if ($rows !== '') { $html .= '<tr><th colspan="2">' . esc_html($group['label']) . '</th></tr>' . $rows; }
         }
