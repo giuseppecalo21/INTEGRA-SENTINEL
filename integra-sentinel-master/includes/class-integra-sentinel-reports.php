@@ -115,6 +115,9 @@ final class Integra_Sentinel_Reports {
             }
         }
         $html .= '</tbody></table>';
+        if (Integra_Sentinel_Checklist::in_monthly($site)) {
+            $html .= Integra_Sentinel_Checklist::document_html($site, 'Accessi, backup e accordi che verifichiamo prima di intervenire sul sito.');
+        }
         if ($incidents) {
             $html .= '<h2>Interruzioni rilevate</h2><table><thead><tr><th>Inizio</th><th>Durata stimata</th><th>Dettaglio</th></tr></thead><tbody>';
             foreach ($incidents as $i) { $html .= '<tr><td>' . self::e(wp_date('d/m/Y H:i', $i['from'])) . '</td><td>' . self::e(self::duration($i['to'] - $i['from'])) . '</td><td>' . self::e($i['error']) . '</td></tr>'; }
@@ -491,6 +494,7 @@ final class Integra_Sentinel_Reports {
             . '<tr><td>Amministratori</td><td>' . count((array) ($r['security']['admins'] ?? array())) . '</td></tr>'
             . '<tr><td>Aggiornamenti disponibili</td><td>' . (int) $a['summary']['updates'] . ' (' . (int) $a['summary']['ready'] . ' applicabili subito, ' . (int) $a['summary']['blocked'] . ' bloccati)</td></tr>'
             . '</tbody></table>';
+        $html .= Integra_Sentinel_Checklist::document_html($site, 'Accessi, backup e accordi necessari per aggiornare il sito in sicurezza, con lo stato verificato alla data di questo audit.');
         $kinds = Integra_Sentinel_Fleet::kinds();
         $owners = Integra_Sentinel_Fleet::owners();
         $by_kind = array();

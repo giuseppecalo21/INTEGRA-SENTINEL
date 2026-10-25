@@ -201,3 +201,14 @@
 @media(max-width:900px){.sn-group-forms,.sn-form-grid,.sn-trend-grid{grid-template-columns:1fr}.sn-page-row{grid-template-columns:1fr}.sn-detail-actions{justify-content:flex-start}}
 @media(max-width:620px){.sn-ready{grid-template-columns:repeat(2,minmax(0,1fr))}.sn-group{grid-template-columns:1fr}.sn-group-side{flex-direction:row;align-items:baseline;gap:10px;text-align:left}.sn-rings{grid-template-columns:1fr}.sn-nav-link{padding:7px 10px}}
 @media (forced-colors:active){.sn-owner-dot,.sn-spark-dot{forced-color-adjust:none}}
+/* Checklist di manutenzione */
+.sn-site-checklist{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:#6e8192;margin:-4px 0 12px!important}
+.sn-detail-chips a.sn-badge{text-decoration:none}
+.sn-checklist summary strong .sn-badge{margin-left:6px}
+.sn-cl-group{border:1px solid #e3eaf0;border-radius:5px;padding:6px 12px 10px;margin:0 0 14px}.sn-cl-group legend{font-size:12px;font-weight:750;color:#2a4156;padding:0 4px}
+.sn-cl-row{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:8px 16px;align-items:start;padding:9px 0 9px 10px;border-left:3px solid #c7d1db;border-bottom:1px solid #eef2f5}.sn-cl-row:last-of-type{border-bottom:0}
+.sn-cl-row.sn-check-ok{border-left-color:#2f9e7a}.sn-cl-row.sn-check-warn{border-left-color:#e0a12e}.sn-cl-row.sn-check-danger{border-left-color:#c72c48;background:#fff9fa}.sn-cl-row.sn-check-muted{border-left-color:#c7d1db}
+.sn-cl-label strong{display:block;font-size:12.5px;color:#1b3044}.sn-cl-label small{display:block;font-size:11px;color:#6d8094;margin-top:2px}.sn-cl-label small.sn-cl-hint,p.sn-cl-hint{color:#136b99}p.sn-cl-hint{font-size:11.5px;margin:4px 0 6px}.sn-cl-label small.sn-cl-stamp{color:#8a99a8;font-style:italic}
+.sn-cl-fields{display:grid;grid-template-columns:150px minmax(0,1fr);gap:6px}.sn-cl-fields input,.sn-cl-fields select{width:100%;max-width:100%}.sn-cl-fields input[name=hosting]{grid-column:1/-1}.sn-cl-fields input[name=panel_url]{grid-column:1/-1}
+.sn-checklist .sn-inline-check{display:flex;margin:8px 0 2px;font-size:12px}
+@media(max-width:900px){.sn-cl-row{grid-template-columns:1fr}.sn-cl-fields{grid-template-columns:1fr}}

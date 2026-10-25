@@ -186,12 +186,14 @@ final class Integra_Sentinel_Environment {
         } elseif ($active_backup) {
             $checks[] = self::check('backup', 'Backup', implode(', ', array_slice($active_backup, 0, 2)), 'ok', 'Plugin di backup attivo; data dell’ultimo backup non leggibile.');
         } elseif (!empty($meta['hosting_backup'])) {
-            $checks[] = self::check('backup', 'Backup', 'Gestito dall’hosting', 'ok', 'Indicato nella scheda cliente.');
+            $checks[] = self::check('backup', 'Backup', 'Gestito dall’hosting', 'ok', 'Indicato nella checklist di manutenzione.');
+        } elseif (Integra_Sentinel_Checklist::has_backup($meta)) {
+            $checks[] = self::check('backup', 'Backup', 'Indicato nella checklist', 'ok', 'Nessun plugin di backup sul sito: backup dichiarato nella checklist di manutenzione.');
         } else {
             $checks[] = self::check('backup', 'Backup', 'Non rilevato', 'warn', 'Nessun plugin di backup attivo.');
             $issues[] = self::issue('backup', 'backup_missing', 'Backup', 'medium', 'agenzia', 'Nessun backup rilevato',
-                'Nessun plugin di backup attivo e nessun backup dell’hosting indicato nella scheda cliente.',
-                'Attivare un backup automatico, oppure segnare nella scheda cliente che il backup è gestito dall’hosting.', 12);
+                'Nessun plugin di backup attivo e nessun backup indicato nella checklist di manutenzione.',
+                'Attivare un backup automatico, oppure segnare nella checklist di manutenzione i backup già attivi (per esempio quelli dell’hosting).', 12);
         }
 
         // Aggiornamenti automatici e cache oggetti (informativi).

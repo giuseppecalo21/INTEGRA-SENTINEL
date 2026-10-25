@@ -3,7 +3,7 @@ Contributors: integra
 Tags: wordpress, vulnerability, monitoring, security, updates
 Requires at least: 6.5
 Requires PHP: 7.4
-Stable tag: 1.9.2
+Stable tag: 1.9.3
 License: GPLv2 or later
 
 Monitoraggio centralizzato degli aggiornamenti e delle vulnerabilita di siti WordPress.
@@ -11,6 +11,14 @@ Author: Integra | https://integracorporate.it/
 
 Principio: il Master e' in SOLA LETTURA verso i siti dei clienti. Non installa, non aggiorna e non modifica nulla:
 riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il lavoro pesante resta sul Master.
+
+== 1.9.3 - 25 October 2026 ==
+* Checklist di manutenzione in ogni scheda sito: le cose da avere prima di aggiornare a mano temi e plugin. Hosting e accessi (dove e' ospitato il sito, area clienti del fornitore, pannello cPanel/Plesk, FTP/SFTP, database, utente amministratore dell'agenzia, dominio, DNS), backup (giornaliero, settimanale, mensile, copia fuori dal server, ripristino provato), aggiornamenti (tema aggiornabile, licenze premium, copia di prova) e accordi (nomina a responsabile del trattamento, art. 28 GDPR).
+* Ogni voce: Da verificare / Si', a posto / No, manca / Non serve, con una nota interna e la data e l'autore dell'ultima modifica. Niente credenziali: nelle note si scrive solo dove sono custodite.
+* Accanto alle voci che puo' confrontare Sentinel mostra cosa rileva dai dati del sito (plugin di backup, tema attivo, child theme, personalizzazioni, problemi di licenza).
+* Panoramica: su ogni sito il badge "Checklist 12/17", il riepilogo dei siti con checklist completa, con voci mancanti o da compilare e il filtro "Checklist incompleta". Nella scheda sito il badge in testata e le voci mancanti in "Da sapere".
+* Report mensile e audit di presa in carico: nuova sezione "Prerequisiti per la manutenzione" con lo stato di ogni voce (mai le note interne). Nel report mensile si puo' nascondere sito per sito; l'audit la mostra sempre.
+* Hosting, link al pannello e "backup dell'hosting" passano dalla scheda cliente alla checklist (i dati gia' inseriti restano). Un backup giornaliero o settimanale segnato nella checklist vale anche per il controllo "Backup" di Sentinel.
 
 == 1.9.2 - 24 October 2026 ==
 * Storico: un solo pulsante "Salva tutti i motivi" registra tutte le note della pagina (prima ogni riga aveva il suo modulo e salvarne una faceva perdere le altre non ancora salvate).
