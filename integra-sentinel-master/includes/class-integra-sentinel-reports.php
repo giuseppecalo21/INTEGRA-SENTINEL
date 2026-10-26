@@ -279,10 +279,11 @@ final class Integra_Sentinel_Reports {
     }
 
     /** Bozza del resoconto con l'IA, salvata come "da rileggere": non entra nel report finche' non viene approvata. */
-    public static function ai_draft($site, $ym, $notes) {
+    /** Un tentativo di bozza (vedi Integra_Sentinel_AI::attempt): le note si salvano comunque, il testo solo se riuscito. */
+    public static function ai_draft($site, $ym, $notes, $attempt = 0, $timeout = 90) {
         $period = self::month_bounds($ym);
         $facts = self::facts($site, $period['ym'], $notes);
-        $result = Integra_Sentinel_AI::generate(Integra_Sentinel_AI::report_system_prompt(), Integra_Sentinel_AI::report_user_prompt($facts));
+        $result = Integra_Sentinel_AI::attempt(Integra_Sentinel_AI::report_system_prompt(), Integra_Sentinel_AI::report_user_prompt($facts), $attempt, 2500, $timeout);
         if (!$result['ok']) {
             Integra_Sentinel_Store::draft_save($site['id'], $period['ym'], array('notes' => $notes));
             return $result;
@@ -389,7 +390,7 @@ final class Integra_Sentinel_Reports {
         self::enqueue_drafts($prev, 'auto');
     }
 
-    /** Due bozze per giro; alla fine un solo avviso (email e canali) con il link alla pagina dei report. */
+    /** Una bozza per giro; alla fine un solo avviso (email e canali) con il link alla pagina dei report. */
     public static function process_queue() {
         if (!Integra_Sentinel_Master::acquire_lock('drafts_queue', 0)) { return; }
         try {
@@ -400,24 +401,22 @@ final class Integra_Sentinel_Reports {
                 return;
             }
             $sites = Integra_Sentinel_Master::sites();
-            for ($n = 0; $n < 2 && $q['sites']; ++$n) {
-                $id = array_shift($q['sites']);
-                $existing = Integra_Sentinel_Store::draft_get($id, $q['ym']);
-                if (isset($sites[$id]) && trim((string) ($existing['body'] ?? '')) === '') {
-                    $result = self::ai_draft($sites[$id], $q['ym'], (string) ($existing['notes'] ?? ''));
-                    $retries = (int) ($q['retries'][$id] ?? 0);
-                    if ($result['ok']) { ++$q['done']; unset($q['failed'][$id]); }
-                    elseif (!empty($result['retryable']) && $retries < 3) {
-                        // Fornitore sovraccarico: il sito torna in fondo alla coda e si riprova tra 10 minuti.
-                        $q['sites'][] = $id;
-                        $q['retries'][$id] = $retries + 1;
-                        $q['wait_until'] = time() + 10 * MINUTE_IN_SECONDS;
-                        update_option(self::QUEUE, $q, false);
-                        break;
-                    } else { $q['failed'][$id] = $result['error']; }
-                }
-                update_option(self::QUEUE, $q, false);
+            // Una bozza e un solo tentativo per giro: ogni richiesta resta breve. Se l'IA e' sovraccarica si riprova
+            // con la sequenza di tentativi (anche i modelli di riserva); finita la sequenza si aspettano 10 minuti, fino a 3 giri.
+            $id = array_shift($q['sites']);
+            $existing = Integra_Sentinel_Store::draft_get($id, $q['ym']);
+            if (isset($sites[$id]) && trim((string) ($existing['body'] ?? '')) === '') {
+                $size = max(1, count(Integra_Sentinel_AI::plan()));
+                $k = (int) ($q['attempts'][$id] ?? 0);
+                $result = self::ai_draft($sites[$id], $q['ym'], (string) ($existing['notes'] ?? ''), $k % $size);
+                if ($result['ok']) { ++$q['done']; unset($q['failed'][$id], $q['attempts'][$id]); }
+                elseif (!empty($result['retryable']) && $k + 1 < $size * 3) {
+                    array_unshift($q['sites'], $id);
+                    $q['attempts'][$id] = $k + 1;
+                    $q['wait_until'] = time() + (($k + 1) % $size === 0 ? 10 * MINUTE_IN_SECONDS : max(30, (int) $result['next_wait']));
+                } else { $q['failed'][$id] = $result['error']; unset($q['attempts'][$id]); }
             }
+            update_option(self::QUEUE, $q, false);
             if ($q['sites']) {
                 if (!wp_next_scheduled(self::HOOK_QUEUE)) { wp_schedule_single_event(max(time() + 30, (int) ($q['wait_until'] ?? 0)), self::HOOK_QUEUE); }
                 return;

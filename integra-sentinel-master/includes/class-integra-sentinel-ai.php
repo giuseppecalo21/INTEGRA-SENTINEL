@@ -92,38 +92,40 @@ final class Integra_Sentinel_AI {
     }
 
     /**
-     * Chiamata al modello con nuovi tentativi in caso di sovraccarico e, se serve, un modello di riserva.
-     * Ritorna ok, text, error, model, retryable (true se l'errore e' temporaneo).
+     * Sequenza dei tentativi: tre volte il modello principale, poi due volte ciascun modello di riserva.
+     * Ogni voce e' [modello, secondi di attesa prima del tentativo].
      */
-    public static function generate($system, $user, $max_tokens = 2500) {
+    public static function plan() {
         $c = self::config();
-        if (!self::configured()) { return array('ok' => false, 'text' => '', 'error' => 'Intelligenza artificiale non configurata: aggiungi la chiave in Impostazioni.', 'model' => '', 'retryable' => false); }
-        if (function_exists('set_time_limit')) { @set_time_limit(300); }
-        $start = time();
-        $plan = array(array($c['model'], array(0, 4, 10)));
-        foreach (self::fallback_models($c) as $model) { $plan[] = array($model, array(0, 4)); }
-        $last = null; $tried = array();
-        foreach ($plan as $step) {
-            list($model, $waits) = $step;
-            foreach ($waits as $wait) {
-                if (time() - $start + $wait > 220) { break 2; }
-                if ($wait) { sleep($wait); }
-                $last = self::call_once($c, $model, $system, $user, $max_tokens);
-                if ($last['ok']) { return $last; }
-                if (!self::retryable($last['code'])) { return $last; }
-                $tried[$model] = true;
-            }
-        }
-        $models = array_keys($tried);
-        $last['error'] = 'Il servizio dell’IA è sovraccarico in questo momento: ho riprovato più volte' . (count($models) > 1 ? ' anche con ' . implode(', ', array_slice($models, 1)) : '')
-            . ' senza successo. Di solito passa in pochi minuti: riprova più tardi. (Dettaglio: ' . $last['error'] . ')';
-        $last['retryable'] = true;
-        return $last;
+        $plan = array(array($c['model'], 0), array($c['model'], 4), array($c['model'], 10));
+        foreach (self::fallback_models($c) as $model) { $plan[] = array($model, 0); $plan[] = array($model, 4); }
+        return $plan;
+    }
+
+    /**
+     * Un solo tentativo (il numero $attempt della sequenza), senza attese: chi chiama decide quando fare il successivo.
+     * Cosi' ogni richiesta resta breve e non supera il tempo massimo del server (errore 500 / Request Timeout).
+     * Ritorna ok, text, error, model, retryable, attempt, total, next_wait (secondi prima del prossimo tentativo, null se finiti).
+     */
+    public static function attempt($system, $user, $attempt = 0, $max_tokens = 2500, $timeout = 90) {
+        $c = self::config();
+        if (!self::configured()) { return array('ok' => false, 'text' => '', 'error' => 'Intelligenza artificiale non configurata: aggiungi la chiave in Impostazioni.', 'model' => '', 'retryable' => false, 'attempt' => 0, 'total' => 0, 'next_wait' => null); }
+        if (function_exists('set_time_limit')) { @set_time_limit($timeout + 30); }
+        $plan = self::plan();
+        $k = max(0, min((int) $attempt, count($plan) - 1));
+        $result = self::call_once($c, $plan[$k][0], $system, $user, $max_tokens, $timeout);
+        $result += array('attempt' => $k, 'total' => count($plan), 'next_wait' => null);
+        if ($result['ok'] || !$result['retryable']) { return $result; }
+        if (isset($plan[$k + 1])) { $result['next_wait'] = (int) $plan[$k + 1][1]; return $result; }
+        $models = array_values(array_unique(array_column($plan, 0)));
+        $result['error'] = 'Il servizio dell’IA è sovraccarico in questo momento: ho riprovato più volte' . (count($models) > 1 ? ' anche con ' . implode(', ', array_slice($models, 1)) : '')
+            . ' senza successo. Di solito passa in pochi minuti: riprova più tardi. (Dettaglio: ' . $result['error'] . ')';
+        return $result;
     }
 
     /** Una sola richiesta al fornitore. Ritorna ok, text, error, model, code, retryable. */
-    private static function call_once($c, $model, $system, $user, $max_tokens) {
-        $args = array('timeout' => 90, 'redirection' => 0, 'limit_response_size' => 1048576, 'headers' => array('Content-Type' => 'application/json'));
+    private static function call_once($c, $model, $system, $user, $max_tokens, $timeout = 90) {
+        $args = array('timeout' => (int) $timeout, 'redirection' => 0, 'limit_response_size' => 1048576, 'headers' => array('Content-Type' => 'application/json'));
         if ($c['provider'] === 'gemini') {
             $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($model) . ':generateContent';
             $args['headers']['x-goog-api-key'] = $c['key'];
@@ -183,7 +185,7 @@ final class Integra_Sentinel_AI {
 
     /** Verifica della chiave con una richiesta minima. Per Gemini elenca anche i modelli Flash disponibili. */
     public static function test() {
-        $result = self::generate('Rispondi solo con la parola: pronto.', 'Verifica del collegamento.', 50);
+        $result = self::attempt('Rispondi solo con la parola: pronto.', 'Verifica del collegamento.', 0, 50, 30);
         $models = array();
         $c = self::config();
         if ($c['provider'] === 'gemini' && $c['key'] !== '') {

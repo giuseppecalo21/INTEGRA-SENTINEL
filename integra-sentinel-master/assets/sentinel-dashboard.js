@@ -625,6 +625,53 @@
     openFromHash();
   });
 
+  // Bozza con l'IA: un tentativo per richiesta; se il servizio e' sovraccarico la pagina aspetta e riprova da sola.
+  all('form.sn-ai-form').forEach(function (form) {
+    var button = form.querySelector('[data-sn-ai-start]');
+    var status = form.querySelector('[data-sn-ai-status]');
+    if (!button || !status || !window.fetch || !window.ajaxurl) return;
+    var label = button.textContent;
+    function say(text, tone) { status.hidden = false; status.textContent = text; status.className = 'sn-ai-status' + (tone ? ' is-' + tone : ''); }
+    function done(ok, text) {
+      if (ok) {
+        say('Bozza pronta: ricarico la pagina…', 'ok');
+        var url = new URL(window.location.href);
+        url.searchParams.set('sentinel_msg', 'draft_ai');
+        window.location.href = url.toString();
+        return;
+      }
+      say(text, 'error');
+      button.disabled = false; button.textContent = label;
+    }
+    function run(attempt, total) {
+      var data = new FormData(form);
+      data.set('action', 'integra_sentinel_report_ai');
+      data.set('attempt', String(attempt));
+      say(attempt ? 'Nuovo tentativo in corso (' + (attempt + 1) + (total ? ' di ' + total : '') + ')…' : 'L’IA sta scrivendo la bozza: di solito serve meno di un minuto.');
+      fetch(window.ajaxurl, {method: 'POST', credentials: 'same-origin', body: data})
+        .then(function (response) { return response.json().catch(function () { throw new Error('HTTP ' + response.status); }); })
+        .then(function (result) {
+          var r = result && result.data ? result.data : {};
+          if (!result || !result.success) throw new Error(r.error || 'Risposta non valida');
+          if (r.ok) return done(true);
+          if (r.wait === null || r.wait === undefined) return done(false, r.error);
+          var wait = Math.max(2, r.wait);
+          say('Il servizio dell’IA è sovraccarico: riprovo tra ' + wait + ' secondi (tentativo ' + (r.attempt + 2) + ' di ' + r.total + ').');
+          setTimeout(function () { run(r.attempt + 1, r.total); }, wait * 1000);
+        })
+        .catch(function (error) {
+          // Risposta interrotta dal server (tempo massimo) o rete: si riprova un paio di volte, poi ci si ferma.
+          if (attempt < 2) { say('Risposta non arrivata (' + error.message + '): riprovo tra 5 secondi.'); setTimeout(function () { run(attempt + 1, total); }, 5000); }
+          else done(false, 'La bozza non è arrivata: ' + error.message + '. Riprova tra qualche minuto.');
+        });
+    }
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      button.disabled = true; button.textContent = 'L’IA sta scrivendo…';
+      run(0, 0);
+    });
+  });
+
   // Plugin e temi del parco: schede Plugin/Temi, siti accesi o spenti e ricerca. Le colonne si ricalcolano sui siti accesi.
   all('[data-sn-fleet]').forEach(function (root) {
     var chips = all('[data-sn-fleet-site]', root);
