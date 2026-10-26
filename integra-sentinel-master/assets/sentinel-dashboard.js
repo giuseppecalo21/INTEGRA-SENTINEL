@@ -640,8 +640,10 @@
         window.location.href = url.toString();
         return;
       }
-      say(text, 'error');
+      say(text + ' Puoi anche farla scrivere a ChatGPT o Gemini: il prompt pronto è qui sotto.', 'error');
       button.disabled = false; button.textContent = label;
+      var manual = document.getElementById('sn-manual-ai');
+      if (manual) { manual.open = true; manual.scrollIntoView({block: 'nearest'}); }
     }
     function run(attempt, total) {
       var data = new FormData(form);
@@ -669,6 +671,35 @@
       event.preventDefault();
       button.disabled = true; button.textContent = 'L’IA sta scrivendo…';
       run(0, 0);
+    });
+  });
+
+  // Prompt da usare a mano: stesse istruzioni e dati dell'IA collegata, con le note del punto 2 appena scritte.
+  (function () {
+    var area = document.getElementById('sn-ai-prompt');
+    var dataEl = document.getElementById('sn-ai-prompt-data');
+    if (!area || !dataEl) return;
+    var data; try { data = JSON.parse(dataEl.textContent); } catch (e) { return; }
+    var notes = document.querySelector('form.sn-ai-form textarea[name="notes"]');
+    function build() {
+      var facts = data.facts || {};
+      if (notes) { var n = notes.value.trim(); facts.note_dell_agenzia = n !== '' ? n : null; }
+      area.value = data.head + JSON.stringify(facts, null, 4) + data.tail;
+    }
+    if (notes) notes.addEventListener('input', build);
+    build();
+  })();
+
+  // Pulsanti "Copia" per i testi pronti.
+  all('[data-sn-copy]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var area = document.getElementById(button.getAttribute('data-sn-copy'));
+      if (!area) return;
+      var label = button.textContent;
+      var ok = function () { button.textContent = 'Copiato ✓'; setTimeout(function () { button.textContent = label; }, 1800); };
+      var fallback = function () { area.focus(); area.select(); try { document.execCommand('copy'); ok(); } catch (e) {} };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(area.value).then(ok, fallback);
+      else fallback();
     });
   });
 
