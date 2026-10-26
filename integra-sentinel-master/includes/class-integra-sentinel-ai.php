@@ -237,8 +237,20 @@ final class Integra_Sentinel_AI {
     }
 
     public static function report_user_prompt($facts) {
-        return "Scrivi il resoconto del mese per il cliente usando esclusivamente questi dati (JSON):\n\n"
-            . wp_json_encode($facts, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return self::report_user_intro() . wp_json_encode($facts, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    private static function report_user_intro() {
+        return "Scrivi il resoconto del mese per il cliente usando esclusivamente questi dati (JSON):\n\n";
+    }
+
+    /**
+     * Lo stesso prompt in un solo testo, da incollare a mano in ChatGPT, Gemini o Claude quando l'IA collegata non risponde.
+     * @return array head, tail: il prompt e' head + dati JSON + tail (la pagina inserisce le note appena scritte).
+     */
+    public static function manual_prompt_parts() {
+        return array('head' => "ISTRUZIONI\n\n" . self::report_system_prompt() . "\n\n---\n\n" . self::report_user_intro(),
+            'tail' => "\n\n---\n\nRispondi soltanto con il testo del resoconto, nel formato indicato (titoli con \"## \", elenchi con \"- \"), senza commenti prima o dopo.");
     }
 
     /** Converte il testo del resoconto ("## titolo", "- punto", **grassetto**) in HTML sicuro. */

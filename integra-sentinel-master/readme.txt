@@ -3,7 +3,7 @@ Contributors: integra
 Tags: wordpress, vulnerability, monitoring, security, updates
 Requires at least: 6.5
 Requires PHP: 7.4
-Stable tag: 1.11.2
+Stable tag: 1.11.3
 License: GPLv2 or later
 
 Monitoraggio centralizzato degli aggiornamenti e delle vulnerabilita di siti WordPress.
@@ -11,6 +11,9 @@ Author: Integra | https://integracorporate.it/
 
 Principio: il Master e' in SOLA LETTURA verso i siti dei clienti. Non installa, non aggiorna e non modifica nulla:
 riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il lavoro pesante resta sul Master.
+
+== 1.11.3 - 26 October 2026 ==
+* Report clienti: nuovo riquadro "Scrivi la bozza con ChatGPT o Gemini (a mano)" con il prompt completo (le stesse istruzioni e gli stessi dati che Sentinel manda all'IA collegata, comprese le note del mese appena scritte) e il pulsante "Copia il prompt". La risposta si incolla in "Rileggi e correggi". Si apre da solo quando l'IA collegata non riesce a scrivere la bozza, e resta aperto se l'IA non e' configurata.
 
 == 1.11.2 - 26 October 2026 ==
 * Corretto l'errore 500 "Request Timeout" con "Scrivi la bozza con l'IA". Prima tutti i tentativi (fino a tre con il modello principale, con le pause, piu' i modelli di riserva) stavano in un'unica richiesta, che con l'IA lenta o sovraccarica superava il tempo massimo del server. Ora ogni richiesta fa un solo tentativo (al massimo 50 secondi) e la pagina ripete da sola i successivi, mostrando a che punto e'; se una risposta viene interrotta dal server riprova dopo 5 secondi.

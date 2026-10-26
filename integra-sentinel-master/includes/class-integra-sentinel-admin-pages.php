@@ -247,12 +247,23 @@ final class Integra_Sentinel_Admin_Pages {
                 echo '<p><button type="submit" class="button button-primary" data-sn-ai-start' . $confirm . '>' . ($body !== '' ? 'Riscrivi la bozza con l’IA' : 'Scrivi la bozza con l’IA') . '</button></p>';
                 echo '<p class="sn-ai-status" data-sn-ai-status role="status" aria-live="polite" hidden></p>';
             } else {
-                echo '<p class="sn-hint">IA non configurata: ' . (current_user_can('manage_options') ? '<a href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-settings') . '#sn-ai') . '">aggiungi una chiave API</a>' : 'chiedi a un amministratore di aggiungere una chiave API') . ', oppure scrivi il resoconto a mano qui sotto.</p>';
+                echo '<p class="sn-hint">IA non configurata: ' . (current_user_can('manage_options') ? '<a href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-settings') . '#sn-ai') . '">aggiungi una chiave API</a>' : 'chiedi a un amministratore di aggiungere una chiave API') . ', oppure usa il prompt pronto qui sotto con ChatGPT o Gemini.</p>';
             }
             echo '</form>';
         }
+        $facts = Integra_Sentinel_Reports::facts($site, $period['ym'], (string) ($draft['notes'] ?? ''));
+        $facts_json = wp_json_encode($facts, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($manage) {
+            // Piano B: lo stesso prompt dell'IA collegata, da incollare a mano. La pagina aggiorna le note mentre le scrivi.
+            $parts = Integra_Sentinel_AI::manual_prompt_parts();
+            echo '<details class="sn-nested-details sn-manual-ai" id="sn-manual-ai"' . ($ai ? '' : ' open') . '><summary>Scrivi la bozza con ChatGPT o Gemini (a mano)</summary>';
+            echo '<p class="sn-hint">Se l’IA collegata non risponde, copia questo testo, incollalo in una nuova chat di ChatGPT, Gemini o Claude e incolla la risposta qui sotto, in “3 · Rileggi e correggi”, poi salva. Contiene le stesse istruzioni e gli stessi dati che Sentinel manda all’IA, comprese le note del punto 2.</p>';
+            echo '<textarea id="sn-ai-prompt" class="large-text sn-facts" rows="10" readonly>' . esc_textarea($parts['head'] . $facts_json . $parts['tail']) . '</textarea>';
+            echo '<script type="application/json" id="sn-ai-prompt-data">' . wp_json_encode(array('head' => $parts['head'], 'tail' => $parts['tail'], 'facts' => $facts), JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) . '</script>';
+            echo '<p><button type="button" class="button" data-sn-copy="sn-ai-prompt">Copia il prompt</button></p></details>';
+        }
         echo '<details class="sn-nested-details"><summary>Quali dati vengono inviati all’IA</summary><p class="sn-hint">Solo questi fatti: nomi e versioni dei componenti, date, conteggi, stato tecnico. Mai credenziali, email, nomi degli amministratori o percorsi dei file.</p><pre class="sn-facts">'
-            . esc_html(wp_json_encode(Integra_Sentinel_Reports::facts($site, $period['ym'], (string) ($draft['notes'] ?? '')), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '</pre></details>';
+            . esc_html($facts_json) . '</pre></details>';
         echo '</section>';
 
         echo '<section class="sn-panel"><h3>3 · Rileggi e correggi</h3><p class="sn-hint">Titoli con <code>## </code>, elenchi con <code>- </code>. Il cliente vede il testo solo dopo l’approvazione; ogni modifica successiva va riapprovata.'

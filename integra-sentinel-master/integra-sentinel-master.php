@@ -3,7 +3,7 @@
  * Plugin Name: Integra Sentinel Master
  * Plugin URI: https://integracorporate.it/
  * Description: Centrale privata in sola lettura per aggiornamenti, colli di bottiglia, dipendenze, vulnerabilita CVE e integrita anti-intrusione dei siti WordPress gestiti da Integra.
- * Version: 1.11.2
+ * Version: 1.11.3
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: Integra
@@ -34,7 +34,7 @@ require_once __DIR__ . '/includes/class-integra-sentinel-admin-pages.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-cli.php';
 
 final class Integra_Sentinel_Master {
-    const VERSION = '1.11.2';
+    const VERSION = '1.11.3';
     const SITES = 'integra_sentinel_master_sites';
     const FEEDS = 'integra_sentinel_master_feeds';
     const MAIL = 'integra_sentinel_master_email';
