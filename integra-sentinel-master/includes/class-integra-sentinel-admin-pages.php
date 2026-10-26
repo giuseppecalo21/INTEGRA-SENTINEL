@@ -1,7 +1,7 @@
 <?php
 /**
  * Integra Sentinel — pagine Licenze, Interventi, Report clienti, Impostazioni e i pannelli aggiuntivi
- * della scheda sito (scheda cliente, ambiente, temi, uptime, richieste al cliente).
+ * della scheda sito (ambiente, temi, uptime).
  */
 
 if (!defined('ABSPATH')) { exit; }
@@ -351,7 +351,7 @@ final class Integra_Sentinel_Admin_Pages {
             $meta = (array) ($site['meta'] ?? array());
             $d = $drafts[$id] ?? null;
             $editor = Integra_Sentinel_Admin::url('integra-sentinel-reports', array('site' => $id, 'ym' => $period['ym']));
-            echo '<tr><td><strong>' . self::e($site['label']) . '</strong><br><small>' . self::e(trim(($meta['contact_name'] ?? '') . ' ' . ($meta['contact_email'] ?? '')) ?: 'Nessun contatto: impostalo nella scheda cliente') . '</small></td>';
+            echo '<tr><td><strong>' . self::e($site['label']) . '</strong>' . (($contact = trim(($meta['contact_name'] ?? '') . ' ' . ($meta['contact_email'] ?? ''))) !== '' ? '<br><small>' . self::e($contact) . '</small>' : '') . '</td>';
             $n = (int) ($counts[$id] ?? 0);
             echo '<td><a href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-history', array('ym' => $period['ym'], 'site' => $id))) . '">' . ($n ? $n . ' ' . ($n === 1 ? 'aggiornamento' : 'aggiornamenti') : 'nessuno') . '</a></td><td class="sn-row-actions">';
             if ($d && trim((string) $d['body']) !== '') {
@@ -363,7 +363,7 @@ final class Integra_Sentinel_Admin_Pages {
             }
             echo '</td><td class="sn-row-actions"><a class="button button-small" target="_blank" rel="noopener" href="' . esc_url(Integra_Sentinel_Admin::document_url('monthly', $id, $period['ym'])) . '">Report del mese ↗</a> <a class="button button-small" target="_blank" rel="noopener" href="' . esc_url(Integra_Sentinel_Admin::document_url('onboarding', $id)) . '">Audit di presa in carico ↗</a></td></tr>';
         }
-        echo '</tbody></table></div><p class="sn-hint">Il contatto del cliente si imposta nella scheda cliente di ogni sito. L’invio usa wp_mail del Master: serve un SMTP configurato.</p></section>';
+        echo '</tbody></table></div><p class="sn-hint">L’invio usa wp_mail del Master: serve un SMTP configurato.</p></section>';
         Integra_Sentinel_Admin::close();
     }
 
@@ -486,7 +486,8 @@ final class Integra_Sentinel_Admin_Pages {
             $me = wp_get_current_user();
             Integra_Sentinel_Admin::form_start('report_send', 'integra-sentinel-reports', array('site_id' => $id, 'ym' => $period['ym'], 'to' => (string) $me->user_email, '_sn_site' => $id, '_sn_ym' => $period['ym']));
             echo '<button class="button" type="submit">Invia una prova a me</button></form>';
-            if (empty($meta['contact_email'])) { echo '<span class="sn-hint">Per inviarlo al cliente imposta l’email nella <a href="' . esc_url(Integra_Sentinel_Master::sn_admin_url($id) . '#sn-meta') . '">scheda cliente</a>.</span>'; }
+            // Senza un indirizzo del cliente gia' registrato resta solo la prova a se stessi.
+            if (empty($meta['contact_email'])) {}
             elseif (!in_array($status, array('approved', 'sent'), true)) { echo '<span class="sn-hint">Approva il resoconto per poterlo inviare a ' . self::e($meta['contact_email']) . '.</span>'; }
             else {
                 Integra_Sentinel_Admin::form_start('report_send', 'integra-sentinel-reports', array('site_id' => $id, 'ym' => $period['ym'], 'to' => $meta['contact_email'], '_sn_site' => $id, '_sn_ym' => $period['ym']));
@@ -669,34 +670,6 @@ final class Integra_Sentinel_Admin_Pages {
 
     /* ---------- Pannelli della scheda sito ---------- */
 
-    /** Scheda cliente: contatti, ondata, tag, finestra di manutenzione e pagine chiave da controllare (l'hosting e' nella checklist). */
-    public static function site_meta_form($site) {
-        $meta = (array) ($site['meta'] ?? array());
-        $pages = array_values((array) ($meta['pages'] ?? array()));
-        echo '<details class="sn-panel sn-config" id="sn-meta"><summary><span><strong>Scheda cliente</strong><small>Contatti, ondata di aggiornamento, tag, finestra di manutenzione e pagine chiave da controllare</small></span><span class="sn-chevron">⌄</span></summary><div class="sn-config-body">';
-        if (!Integra_Sentinel_Settings::can_manage()) { echo '<p class="sn-muted">Sola visione.</p></div></details>'; return; }
-        Integra_Sentinel_Admin::form_start('site_meta', 'integra-sentinel', array('site_id' => $site['id'], '_sn_site' => $site['id'], '_sn_anchor' => 'sn-meta'));
-        echo '<div class="sn-form-grid">';
-        echo '<label>Referente del cliente<input type="text" name="contact_name" maxlength="80" value="' . esc_attr($meta['contact_name'] ?? '') . '"></label>';
-        echo '<label>Email del referente<input type="email" name="contact_email" value="' . esc_attr($meta['contact_email'] ?? '') . '"></label>';
-        echo '<label>Ondata di aggiornamento<select name="ring">';
-        foreach (Integra_Sentinel_Fleet::ring_labels() as $ring => $label) { echo '<option value="' . (int) $ring . '"' . selected((int) ($meta['ring'] ?? 2), $ring, false) . '>' . self::e($label) . '</option>'; }
-        echo '</select></label>';
-        echo '<label>Tag (separati da virgola)<input type="text" name="tags" value="' . esc_attr(implode(', ', (array) ($meta['tags'] ?? array()))) . '" placeholder="ecommerce, contratto-pro"></label>';
-        echo '<label>Contratto<input type="text" name="contract" maxlength="60" value="' . esc_attr($meta['contract'] ?? '') . '" placeholder="Manutenzione Pro"></label>';
-        echo '<label>Finestra di manutenzione<input type="text" name="window" maxlength="80" value="' . esc_attr($meta['window'] ?? '') . '" placeholder="mar–gio 8:00–10:00"></label>';
-        echo '<label class="sn-inline-check"><input type="checkbox" name="probe_off" value="1"' . checked(!empty($meta['probe_off']), true, false) . '> Non controllare la raggiungibilità di questo sito</label>';
-        echo '<label class="sn-span-2">Testo che deve comparire nella home (facoltativo)<input type="text" name="home_expect" maxlength="120" value="' . esc_attr($meta['home_expect'] ?? '') . '" placeholder="es. il nome dell’azienda nel footer"></label>';
-        echo '<fieldset class="sn-span-2"><legend>Pagine chiave controllate insieme alla home (stesso dominio)</legend>';
-        for ($i = 0; $i < 3; ++$i) {
-            $pg = (array) ($pages[$i] ?? array());
-            echo '<div class="sn-page-row"><input type="text" name="page_label[]" maxlength="40" placeholder="Etichetta (es. Carrello)" value="' . esc_attr($pg['label'] ?? '') . '" aria-label="Etichetta pagina ' . ($i + 1) . '"><input type="url" name="page_url[]" placeholder="' . esc_attr(trailingslashit($site['url'])) . 'carrello/" value="' . esc_attr($pg['url'] ?? '') . '" aria-label="Indirizzo pagina ' . ($i + 1) . '"><input type="text" name="page_expect[]" maxlength="120" placeholder="Testo atteso (facoltativo)" value="' . esc_attr($pg['expect'] ?? '') . '" aria-label="Testo atteso pagina ' . ($i + 1) . '"></div>';
-        }
-        echo '</fieldset><label class="sn-span-2">Note tecniche<textarea name="notes" rows="3" maxlength="2000">' . esc_textarea($meta['notes'] ?? '') . '</textarea></label></div>';
-        submit_button('Salva scheda cliente', 'primary', 'submit', false);
-        echo '</form></div></details>';
-    }
-
     /** Ambiente del server: cosa impedisce agli aggiornamenti di funzionare. */
     public static function environment_panel($analysis) {
         $checks = $analysis['environment']['checks'];
@@ -744,7 +717,7 @@ final class Integra_Sentinel_Admin_Pages {
             echo '<button class="button" type="submit">Verifica adesso</button></form>';
         }
         echo '</div>';
-        if (!empty($meta['probe_off'])) { echo '<p class="sn-hint">Controllo automatico disattivato nella scheda cliente.</p>'; }
+        if (!empty($meta['probe_off'])) { echo '<p class="sn-hint">Controllo automatico disattivato per questo sito.</p>'; }
         echo '<div class="sn-check-grid">';
         echo '<div class="sn-check sn-check-' . ($u7 ? ($u7['pct'] >= 99.5 ? 'ok' : 'warn') : 'muted') . '"><span class="sn-check-label">Ultimi 7 giorni</span><strong>' . ($u7 ? self::e(number_format_i18n($u7['pct'], 2)) . '%' : 'n.d.') . '</strong><small>' . ($u7 ? (int) $u7['checks'] . ' controlli · ' . (int) $u7['ms'] . ' ms medi' : 'Nessun controllo registrato') . '</small></div>';
         echo '<div class="sn-check sn-check-' . ($u30 ? ($u30['pct'] >= 99.5 ? 'ok' : 'warn') : 'muted') . '"><span class="sn-check-label">Ultimi 30 giorni</span><strong>' . ($u30 ? self::e(number_format_i18n($u30['pct'], 2)) . '%' : 'n.d.') . '</strong><small>' . ($u30 ? (int) $u30['checks'] . ' controlli' : '—') . '</small></div>';
@@ -755,24 +728,6 @@ final class Integra_Sentinel_Admin_Pages {
                 . self::e($r === null ? $pg['url'] : ('HTTP ' . (int) $r['code'] . ' · ' . (int) $r['ms'] . ' ms' . (!empty($r['error']) && empty($r['ok']) ? ' · ' . $r['error'] : ''))) . '</small></div>';
         }
         echo '</div>' . (!empty($state['last_at']) ? '<p class="sn-hint">Ultimo controllo: ' . self::e(wp_date('d/m/Y H:i', (int) $state['last_at'])) . '</p>' : '') . '</section>';
-    }
-
-    /** Testi pronti per il cliente e per l'hosting. */
-    public static function requests_panel($site) {
-        $req = Integra_Sentinel_Reports::requests($site);
-        if ($req['client'] === '' && $req['hosting'] === '') { return; }
-        $meta = (array) ($site['meta'] ?? array());
-        echo '<section class="sn-panel sn-requests" id="sn-requests"><div class="sn-section-head"><div><h3>Richieste da inviare</h3><p>Testi pronti con le azioni che spettano al cliente o all’hosting. Copiali nel tuo programma di posta: Sentinel non invia nulla a terzi.</p></div></div><div class="sn-two">';
-        foreach (array('client' => 'Al cliente', 'hosting' => 'All’hosting') as $key => $label) {
-            if ($req[$key] === '') { continue; }
-            $id = 'sn-req-' . $key;
-            echo '<div><label for="' . esc_attr($id) . '"><strong>' . self::e($label) . '</strong></label><textarea id="' . esc_attr($id) . '" class="large-text" rows="9" readonly>' . esc_textarea($req[$key]) . '</textarea><p><button type="button" class="button" data-sn-copy="' . esc_attr($id) . '">Copia il testo</button>';
-            if ($key === 'client' && !empty($meta['contact_email']) && is_email($meta['contact_email'])) {
-                echo ' <a class="button" href="' . esc_url('mailto:' . rawurlencode($meta['contact_email']) . '?subject=' . rawurlencode($req['subject'])) . '">Apri una email al referente</a>';
-            }
-            echo '</p></div>';
-        }
-        echo '</div></section>';
     }
 
     /** Codice di abbinamento appena generato (visibile una volta, all'utente che l'ha creato). */

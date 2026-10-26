@@ -71,7 +71,6 @@ final class Integra_Sentinel_Admin {
             'webhook_test' => array('Messaggio di prova inviato ai canali configurati.', 'success'),
             'webhook_fail' => array('Nessun canale ha accettato il messaggio: controlla URL e token.', 'error'),
             'saved' => array('Impostazioni salvate.', 'success'),
-            'site_meta' => array('Scheda cliente salvata.', 'success'),
             'site_checklist' => array('Checklist di manutenzione salvata.', 'success'),
             'pair' => array('Codice di abbinamento generato: copialo adesso, è valido 30 minuti.', 'success'),
             'probe' => array('Controllo di raggiungibilità eseguito.', 'success'),
@@ -633,11 +632,6 @@ final class Integra_Sentinel_Admin {
             case 'scan':
                 Integra_Sentinel_Settings::save('scan', array('batch' => max(2, min(12, absint(self::post('batch', 6))))));
                 self::back('saved');
-            case 'site_meta':
-                if (!isset($sites[$site_id])) { self::back('invalid'); }
-                $ok = Integra_Sentinel_Master::save_site_meta($site_id, $_POST);
-                Integra_Sentinel_Store::log('site_meta', 'scheda cliente aggiornata', $site_id);
-                self::back($ok ? 'site_meta' : 'busy');
             case 'site_checklist':
                 if (!isset($sites[$site_id])) { self::back('invalid'); }
                 $ok = Integra_Sentinel_Checklist::save($site_id, $_POST);

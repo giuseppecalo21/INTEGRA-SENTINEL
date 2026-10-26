@@ -81,7 +81,7 @@ final class Integra_Sentinel_Dependencies {
         return ltrim((string) $v, 'vV');
     }
 
-    private static function newer($a, $b) {
+    public static function newer($a, $b) {
         if (!self::valid_version($a)) { return false; }
         if (!self::valid_version($b)) { return true; }
         return version_compare(self::clean_version($a), self::clean_version($b), '>');

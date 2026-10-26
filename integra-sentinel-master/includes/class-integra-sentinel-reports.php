@@ -519,32 +519,6 @@ final class Integra_Sentinel_Reports {
         return self::shell('Audit di presa in carico', $site['label'], $html);
     }
 
-    /**
-     * Testi pronti da inviare: al cliente (licenze, decisioni) e all'hosting (PHP, permessi, spazio).
-     * @return array client, hosting, subject
-     */
-    public static function requests($site) {
-        $a = Integra_Sentinel_Analysis::site($site);
-        $b = Integra_Sentinel_Settings::get('branding');
-        $meta = (array) ($site['meta'] ?? array());
-        $client = array(); $hosting = array();
-        foreach ($a ? $a['bottlenecks'] : array() as $item) {
-            if ($item['owner'] === 'cliente') {
-                $cost = '';
-                foreach (Integra_Sentinel_Licenses::for_slug((string) $item['subject']) as $lic) { if (!empty($lic['cost'])) { $cost = ' (circa ' . number_format_i18n((float) $lic['cost'], 2) . ' €/anno)'; break; } }
-                $client[] = '- ' . $item['title'] . $cost . ': ' . $item['action'];
-            } elseif ($item['owner'] === 'hosting') {
-                $hosting[] = '- ' . $item['title'] . '. ' . $item['detail'];
-            }
-        }
-        $greeting = !empty($meta['contact_name']) ? 'Gentile ' . $meta['contact_name'] . ',' : 'Buongiorno,';
-        $client_text = $client ? $greeting . "\n\nper mantenere aggiornato e sicuro il sito " . $site['url'] . " servono alcune azioni da parte vostra:\n\n" . implode("\n", $client)
-            . "\n\nSenza questi passaggi gli aggiornamenti dei componenti indicati restano bloccati. Restiamo a disposizione per qualsiasi chiarimento.\n\n" . $b['name'] : '';
-        $hosting_text = $hosting ? "Buongiorno,\n\nper il sito " . $site['url'] . " chiediamo il vostro intervento su:\n\n" . implode("\n", $hosting)
-            . "\n\nGrazie,\n" . $b['name'] : '';
-        return array('client' => $client_text, 'hosting' => $hosting_text, 'subject' => 'Aggiornamenti del sito ' . wp_parse_url((string) $site['url'], PHP_URL_HOST) . ': azioni necessarie');
-    }
-
     public static function send_monthly($site, $ym, $to) {
         $period = self::month_bounds($ym);
         $to = sanitize_email($to);

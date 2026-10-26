@@ -3,7 +3,7 @@ Contributors: integra
 Tags: wordpress, vulnerability, monitoring, security, updates
 Requires at least: 6.5
 Requires PHP: 7.4
-Stable tag: 1.9.3
+Stable tag: 1.10.0
 License: GPLv2 or later
 
 Monitoraggio centralizzato degli aggiornamenti e delle vulnerabilita di siti WordPress.
@@ -11,6 +11,11 @@ Author: Integra | https://integracorporate.it/
 
 Principio: il Master e' in SOLA LETTURA verso i siti dei clienti. Non installa, non aggiorna e non modifica nulla:
 riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il lavoro pesante resta sul Master.
+
+== 1.10.0 - 26 October 2026 ==
+* Scheda sito: i plugin installati sono divisi in tre gruppi a scomparsa, "Da aggiornare", "Fuori repository" e "Aggiornati", con il numero di plugin e quelli con vulnerabilita' in testata. "Da aggiornare" e "Fuori repository" sono aperti; "Aggiornati" si apre da solo se contiene plugin vulnerabili. La ricerca apre i gruppi con risultati e nasconde quelli vuoti.
+* "Fuori repository" assorbe il pannello "Origine dei plugin": per ogni plugin origine e canale, versione piu' recente nota (anche da catalogo Integra, pacchetto del tema o altri siti) e link al fornitore. Tolti i vecchi filtri dell'elenco plugin.
+* Tolti il pannello "Richieste da inviare" e la "Scheda cliente". I dati gia' salvati nella scheda (contatto, ondata, tag, pagine chiave) restano e continuano a valere, ma non si modificano piu' dal Master.
 
 == 1.9.3 - 25 October 2026 ==
 * Checklist di manutenzione in ogni scheda sito: le cose da avere prima di aggiornare a mano temi e plugin. Hosting e accessi (dove e' ospitato il sito, area clienti del fornitore, pannello cPanel/Plesk, FTP/SFTP, database, utente amministratore dell'agenzia, dominio, DNS), backup (giornaliero, settimanale, mensile, copia fuori dal server, ripristino provato), aggiornamenti (tema aggiornabile, licenze premium, copia di prova) e accordi (nomina a responsabile del trattamento, art. 28 GDPR).
