@@ -3,7 +3,7 @@ Contributors: integra
 Tags: wordpress, vulnerability, monitoring, security, updates
 Requires at least: 6.5
 Requires PHP: 7.4
-Stable tag: 1.11.1
+Stable tag: 1.11.2
 License: GPLv2 or later
 
 Monitoraggio centralizzato degli aggiornamenti e delle vulnerabilita di siti WordPress.
@@ -11,6 +11,10 @@ Author: Integra | https://integracorporate.it/
 
 Principio: il Master e' in SOLA LETTURA verso i siti dei clienti. Non installa, non aggiorna e non modifica nulla:
 riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il lavoro pesante resta sul Master.
+
+== 1.11.2 - 26 October 2026 ==
+* Corretto l'errore 500 "Request Timeout" con "Scrivi la bozza con l'IA". Prima tutti i tentativi (fino a tre con il modello principale, con le pause, piu' i modelli di riserva) stavano in un'unica richiesta, che con l'IA lenta o sovraccarica superava il tempo massimo del server. Ora ogni richiesta fa un solo tentativo (al massimo 50 secondi) e la pagina ripete da sola i successivi, mostrando a che punto e'; se una risposta viene interrotta dal server riprova dopo 5 secondi.
+* "Prepara tutte le bozze": una bozza e un tentativo per giro, con la stessa sequenza di tentativi (anche i modelli di riserva) e 10 minuti di pausa dopo ogni sequenza fallita, fino a 3 volte.
 
 == 1.11.1 - 26 October 2026 ==
 * Versioni incrociate tra i siti, anche per i temi (prima solo per i plugin): se un plugin o un tema fuori repository e' piu' recente su un altro sito, o WordPress lo propone li', qui c'e' sicuramente almeno un aggiornamento, anche se non e' nel catalogo. La nota lo dice esplicitamente, per esempio "Su Zona Wrestling e' gia' installata la 6.6: esiste almeno un aggiornamento, anche se non e' nel catalogo".

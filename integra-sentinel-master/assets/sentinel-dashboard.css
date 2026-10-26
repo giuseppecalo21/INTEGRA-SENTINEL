@@ -201,3 +201,5 @@
 /* 1.11.0 — Plugin e temi del parco: siti accendibili e schede. */
 .sn-fleet-sites{background:#fff;border:1px solid #e3eaf0;border-radius:6px;padding:12px 14px;margin:0 0 14px}.sn-fleet-sites-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-bottom:8px}.sn-fleet-sites-head .sn-hint{margin:0!important}.sn-fleet-sites .sn-chip{opacity:.55}.sn-fleet-sites .sn-chip.is-selected{opacity:1}.sn-fleet-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px}.sn-fleet-bar .sn-tab span{font-weight:800;margin-left:4px}.sn-products tr[hidden]{display:none}
 .sn-themes .sn-origin-ver{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}.sn-themes .sn-nested-details{margin-top:6px}
+/* 1.11.2 — Avanzamento della bozza con l'IA. */
+.sn-ai-status{font-size:12.5px;color:#2a4156;background:#eef6fb;border:1px solid #cfe3f1;border-radius:5px;padding:8px 11px;margin:6px 0 0}.sn-ai-status[hidden]{display:none}.sn-ai-status.is-error{color:#731c28;background:#fff5f6;border-color:#f1c9d0}.sn-ai-status.is-ok{color:#1f5f49;background:#f2fbf7;border-color:#cdeadf}

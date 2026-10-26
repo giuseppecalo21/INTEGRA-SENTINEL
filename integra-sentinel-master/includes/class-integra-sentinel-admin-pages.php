@@ -244,7 +244,8 @@ final class Integra_Sentinel_Admin_Pages {
             echo '<textarea name="notes" rows="5" class="large-text" placeholder="Es.: Elementor Pro resta alla versione attuale perché la licenza è scaduta: aspettiamo la decisione del cliente sul rinnovo. Dopo l’aggiornamento di WooCommerce abbiamo fatto un ordine di prova.">' . esc_textarea((string) ($draft['notes'] ?? '')) . '</textarea>';
             if ($ai) {
                 $confirm = $body !== '' ? ' onclick="return confirm(' . esc_attr(wp_json_encode('La bozza attuale verrà sostituita da una nuova versione scritta dall’IA. Continuare?')) . ')"' : '';
-                echo '<p><button type="submit" class="button button-primary" data-sn-busy="L’IA sta scrivendo… può servire fino a un minuto"' . $confirm . '>' . ($body !== '' ? 'Riscrivi la bozza con l’IA' : 'Scrivi la bozza con l’IA') . '</button></p>';
+                echo '<p><button type="submit" class="button button-primary" data-sn-ai-start' . $confirm . '>' . ($body !== '' ? 'Riscrivi la bozza con l’IA' : 'Scrivi la bozza con l’IA') . '</button></p>';
+                echo '<p class="sn-ai-status" data-sn-ai-status role="status" aria-live="polite" hidden></p>';
             } else {
                 echo '<p class="sn-hint">IA non configurata: ' . (current_user_can('manage_options') ? '<a href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-settings') . '#sn-ai') . '">aggiungi una chiave API</a>' : 'chiedi a un amministratore di aggiungere una chiave API') . ', oppure scrivi il resoconto a mano qui sotto.</p>';
             }

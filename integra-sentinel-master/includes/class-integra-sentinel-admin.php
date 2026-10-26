@@ -25,6 +25,7 @@ final class Integra_Sentinel_Admin {
         add_action('admin_post_integra_sentinel_admin', array(__CLASS__, 'handle'));
         add_action('admin_post_integra_sentinel_document', array(__CLASS__, 'document'));
         add_action('admin_post_integra_sentinel_csv', array(__CLASS__, 'csv'));
+        add_action('wp_ajax_integra_sentinel_report_ai', array(__CLASS__, 'ajax_report_ai'));
     }
 
     public static function menu() {
@@ -663,7 +664,8 @@ final class Integra_Sentinel_Admin {
             case 'report_ai':
                 if (!isset($sites[$site_id])) { self::back('invalid'); }
                 $ym = Integra_Sentinel_Reports::month_bounds(sanitize_text_field(self::post('ym')))['ym'];
-                $result = Integra_Sentinel_Reports::ai_draft($sites[$site_id], $ym, (string) self::post('notes'));
+                // Senza JavaScript: un solo tentativo, breve. Con JavaScript la pagina usa ajax_report_ai e ripete da sola.
+                $result = Integra_Sentinel_Reports::ai_draft($sites[$site_id], $ym, (string) self::post('notes'), 0, 50);
                 if (!$result['ok']) { set_transient('integra_sentinel_ai_error_' . get_current_user_id(), $result['error'], 10 * MINUTE_IN_SECONDS); }
                 Integra_Sentinel_Store::log('report_ai', ($result['ok'] ? 'bozza scritta con ' : 'bozza non riuscita con ') . $result['model'] . ' · ' . $ym, $site_id);
                 self::back($result['ok'] ? 'draft_ai' : 'draft_ai_fail');
@@ -689,6 +691,25 @@ final class Integra_Sentinel_Admin {
                 self::back('intel');
         }
         self::back('invalid');
+    }
+
+    /**
+     * Bozza con l'IA chiamata dalla pagina: un tentativo per richiesta, cosi' nessuna richiesta supera il tempo massimo
+     * del server. Se l'IA e' sovraccarica la risposta dice dopo quanti secondi fare il tentativo successivo.
+     */
+    public static function ajax_report_ai() {
+        if (!Integra_Sentinel_Settings::can_manage()) { wp_send_json_error(array('error' => 'Operazione non autorizzata.'), 403); }
+        check_ajax_referer('integra_sentinel_admin');
+        $sites = Integra_Sentinel_Master::sites();
+        $site_id = sanitize_text_field(self::post('site_id'));
+        if (!isset($sites[$site_id])) { wp_send_json_error(array('error' => 'Sito non trovato.'), 404); }
+        $ym = Integra_Sentinel_Reports::month_bounds(sanitize_text_field(self::post('ym')))['ym'];
+        $attempt = absint(self::post('attempt', 0));
+        $result = Integra_Sentinel_Reports::ai_draft($sites[$site_id], $ym, (string) self::post('notes'), $attempt, 50);
+        $final = $result['ok'] || $result['next_wait'] === null;
+        if ($final) { Integra_Sentinel_Store::log('report_ai', ($result['ok'] ? 'bozza scritta con ' : 'bozza non riuscita con ') . $result['model'] . ' · ' . $ym, $site_id); }
+        wp_send_json_success(array('ok' => (bool) $result['ok'], 'error' => (string) $result['error'], 'model' => (string) $result['model'],
+            'attempt' => (int) $result['attempt'], 'total' => (int) $result['total'], 'wait' => $final ? null : (int) $result['next_wait']));
     }
 
     /** Documenti stampabili: report mensile e audit di presa in carico. */
