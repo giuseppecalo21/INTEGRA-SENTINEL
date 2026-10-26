@@ -76,7 +76,7 @@ final class Integra_Sentinel_CLI {
     }
 
     /**
-     * Esegue i lavori giornalieri: metriche per gli andamenti, promemoria licenze, chiusura interventi, pulizia.
+     * Esegue i lavori giornalieri: metriche per gli andamenti, pulizia dell'archivio, bozze automatiche.
      */
     public function daily() {
         Integra_Sentinel_Jobs::maybe_daily(true);
@@ -110,14 +110,10 @@ final class Integra_Sentinel_CLI {
      */
     public function bottlenecks($args, $assoc) {
         $fleet = Integra_Sentinel_Fleet::aggregate();
-        $sites = Integra_Sentinel_Master::sites();
         $rows = array();
-        foreach ($fleet['kinds'] as $kind => $groups) {
-            foreach ($groups as $g) {
-                foreach ($g['items'] as $site_id => $b) {
-                    $rows[] = array('causa' => Integra_Sentinel_Fleet::kind_label($kind), 'elemento' => $g['name'], 'gravita' => $b['severity'], 'chi' => $b['owner'],
-                        'sito' => $sites[$site_id]['label'] ?? $site_id, 'problema' => $b['title']);
-                }
+        foreach ($fleet['kinds'] as $kind => $items) {
+            foreach ($items as $b) {
+                $rows[] = array('sito' => $b['site_label'], 'causa' => Integra_Sentinel_Fleet::kind_label($kind), 'componente' => $b['subjectName'], 'gravita' => $b['severity'], 'problema' => $b['title']);
             }
         }
         if (!$rows) { WP_CLI::success('Nessun collo di bottiglia.'); return; }

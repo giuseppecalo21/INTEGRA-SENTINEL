@@ -1,6 +1,6 @@
 <?php
 /**
- * Integra Sentinel — pagine Licenze, Interventi, Report clienti, Impostazioni e i pannelli aggiuntivi
+ * Integra Sentinel — pagine Storico, Report clienti, Impostazioni e i pannelli aggiuntivi
  * della scheda sito (ambiente, temi, uptime).
  */
 
@@ -12,223 +12,6 @@ final class Integra_Sentinel_Admin_Pages {
 
     private static function badge($text, $tone = 'muted') {
         return '<span class="sn-badge sn-' . esc_attr($tone) . '">' . self::e($text) . '</span>';
-    }
-
-    /** Utenti che possono vedere Sentinel (amministratori e ruoli abilitati). */
-    public static function users() {
-        $roles = Integra_Sentinel_Settings::get('roles');
-        $role_in = array_values(array_unique(array_merge(array('administrator'), (array) ($roles['view'] ?? array()), (array) ($roles['manage'] ?? array()))));
-        return get_users(array('role__in' => $role_in, 'fields' => array('ID', 'display_name'), 'number' => 200, 'orderby' => 'display_name'));
-    }
-
-    public static function user_select($name, $selected) {
-        $html = '<select name="' . esc_attr($name) . '"><option value="0">—</option>';
-        foreach (self::users() as $u) { $html .= '<option value="' . (int) $u->ID . '"' . selected((int) $selected, (int) $u->ID, false) . '>' . self::e($u->display_name) . '</option>'; }
-        return $html . '</select>';
-    }
-
-    private static function site_select($name, $selected, $sites, $empty = '—') {
-        $html = '<select name="' . esc_attr($name) . '"><option value="">' . self::e($empty) . '</option>';
-        foreach ($sites as $id => $site) { $html .= '<option value="' . esc_attr($id) . '"' . selected($selected, $id, false) . '>' . self::e($site['label']) . '</option>'; }
-        return $html . '</select>';
-    }
-
-    /* ---------- Licenze ---------- */
-
-    public static function licenses() {
-        $sites = Integra_Sentinel_Master::sites();
-        $all = Integra_Sentinel_Licenses::all();
-        $usage = Integra_Sentinel_Licenses::usage($sites);
-        $costs = Integra_Sentinel_Licenses::annual_cost();
-        $types = Integra_Sentinel_Licenses::types();
-        $manage = Integra_Sentinel_Settings::can_manage();
-        Integra_Sentinel_Admin::open('integra-sentinel-licenses', self::badge(count($all) . ' licenze', 'brand'));
-        echo '<section class="sn-page-heading"><div><p class="sn-kicker">REGISTRO LICENZE</p><h2>Chi possiede ogni licenza premium</h2><p>Serve a capire, per ogni licenza mancante su un sito, se basta attivare quella dell’agenzia o se deve intervenire il cliente. Qui non si salvano le chiavi di licenza.</p></div>'
-            . ($manage ? '<a class="button button-primary" href="#sn-license-form">+ Registra licenza</a>' : '') . '</section>';
-        $expiring = Integra_Sentinel_Licenses::expiring(30);
-        $expired = 0;
-        foreach ($all as $entry) { if (Integra_Sentinel_Licenses::status($entry) === 'expired') { ++$expired; } }
-        echo '<div class="sn-stats">';
-        Integra_Sentinel_Master::sn_stat(count($all), 'Licenze registrate', count(Integra_Sentinel_Intel::envato_items()) . ' acquisti Envato letti', 'brand');
-        Integra_Sentinel_Master::sn_stat(number_format_i18n($costs['agenzia'], 0) . ' €', 'Costo annuo agenzia', 'rinnovi a carico dell’agenzia', 'neutral');
-        Integra_Sentinel_Master::sn_stat(number_format_i18n($costs['cliente'], 0) . ' €', 'Costo annuo clienti', 'rinnovi a carico dei clienti', 'neutral');
-        Integra_Sentinel_Master::sn_stat(count($expiring), 'In scadenza entro 30 giorni', $expired . ' già scadute', count($expiring) || $expired ? 'warn' : 'clear');
-        echo '</div>';
-
-        echo '<section class="sn-section"><div class="sn-table-wrap"><table class="sn-simple-table"><thead><tr><th>Prodotto</th><th>Tipo</th><th>Siti</th><th>Scadenza</th><th>Costo / anno</th><th>Paga</th><th></th></tr></thead><tbody>';
-        if (!$all) { echo '<tr><td colspan="7" class="sn-muted">Nessuna licenza registrata. Inizia da quelle segnalate nei colli di bottiglia o dall’elenco “Premium senza licenza registrata” qui sotto.</td></tr>'; }
-        foreach ($all as $id => $entry) {
-            $status = Integra_Sentinel_Licenses::status($entry);
-            $left = Integra_Sentinel_Licenses::days_left($entry);
-            $used = (array) ($usage[$id]['sites'] ?? array());
-            $exp = $status === 'perpetual' ? self::badge('Perpetua', 'ok') : ($status === 'expired' ? self::badge('Scaduta il ' . wp_date('d/m/Y', strtotime($entry['expires'] . ' 12:00:00')), 'danger')
-                : ($status === 'soon' ? self::badge('Tra ' . $left . ' giorni', 'warn') : self::e(wp_date('d/m/Y', strtotime($entry['expires'] . ' 12:00:00')))));
-            echo '<tr><td><strong>' . self::e($entry['product']) . '</strong><br><small><code>' . self::e(implode(', ', $entry['slugs'])) . '</code></small>'
-                . (!empty($entry['vendor_url']) ? ' · <a href="' . esc_url($entry['vendor_url']) . '" target="_blank" rel="noopener noreferrer">fornitore ↗</a>' : '') . '</td>';
-            echo '<td>' . self::e($types[$entry['type']] ?? $entry['type']) . '</td><td>' . count($used) . ($entry['type'] === 'agency_seats' ? ' / ' . (int) $entry['seats'] : '')
-                . (!empty($usage[$id]['over']) ? ' ' . self::badge('Oltre i siti acquistati', 'danger') : '') . ($used ? '<br><small>' . self::e(implode(', ', array_slice($used, 0, 4)) . (count($used) > 4 ? '…' : '')) . '</small>' : '') . '</td>';
-            echo '<td>' . $exp . '</td><td>' . ($entry['cost'] ? self::e(number_format_i18n((float) $entry['cost'], 2)) . ' €' : '—') . '</td><td>' . self::e($entry['payer'] === 'cliente' ? 'Cliente' : 'Agenzia') . '</td><td class="sn-row-actions">';
-            if ($manage) {
-                echo '<a class="button button-small" href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-licenses', array('edit' => $id)) . '#sn-license-form') . '">Modifica</a>';
-                Integra_Sentinel_Admin::form_start('license_delete', 'integra-sentinel-licenses', array('id' => $id));
-                echo '<button class="button button-small" type="submit" onclick="return confirm(\'Eliminare questa licenza dal registro?\')">Elimina</button></form>';
-            }
-            echo '</td></tr>';
-        }
-        echo '</tbody></table></div></section>';
-
-        // Premium presenti nel parco ma non coperti dal registro.
-        $fleet = Integra_Sentinel_Fleet::aggregate();
-        $covered = array();
-        foreach ($all as $entry) { foreach ((array) $entry['slugs'] as $slug) { $covered[$slug] = true; } }
-        $missing = array();
-        foreach (Integra_Sentinel_Fleet::products($fleet) as $p) {
-            if (!$p['premium'] || isset($covered[$p['slug']])) { continue; }
-            $missing[] = $p;
-        }
-        echo '<section class="sn-panel"><div class="sn-section-head"><div><h3>Premium senza licenza registrata</h3><p>Prodotti commerciali presenti nel parco per cui non sai ancora chi possiede la licenza.</p></div><span class="sn-counter">' . count($missing) . '</span></div>';
-        if (!$missing) { echo '<p class="sn-muted">Tutti i premium del parco sono coperti dal registro.</p>'; }
-        else {
-            echo '<ul class="sn-origin-list">';
-            foreach (array_slice($missing, 0, 60) as $p) {
-                echo '<li><div><strong>' . self::e($p['name']) . '</strong> ' . self::badge($p['type'] === 'theme' ? 'Tema' : 'Plugin', 'muted') . '<small><code>' . self::e($p['slug']) . '</code> · ' . count($p['sites']) . ' siti</small></div>';
-                if ($manage) { echo '<div class="sn-origin-ver"><a class="button button-small" href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-licenses', array('new' => 1, 'product' => $p['name'], 'slugs' => $p['slug'])) . '#sn-license-form') . '">Registra</a></div>'; }
-                echo '</li>';
-            }
-            echo '</ul>';
-        }
-        echo '</section>';
-
-        if ($manage) { self::license_form($sites); }
-        self::envato_panel($sites);
-        Integra_Sentinel_Admin::close();
-    }
-
-    private static function license_form($sites) {
-        $edit = isset($_GET['edit']) ? Integra_Sentinel_Licenses::get(sanitize_key(wp_unslash($_GET['edit']))) : null;
-        $entry = $edit ?: array('id' => '', 'product' => isset($_GET['product']) ? sanitize_text_field(wp_unslash($_GET['product'])) : '',
-            'slugs' => isset($_GET['slugs']) ? array(sanitize_title(wp_unslash($_GET['slugs']))) : array(), 'type' => 'agency_unlimited', 'seats' => 0, 'expires' => '',
-            'cost' => 0, 'payer' => 'agenzia', 'sites' => array(), 'vendor_url' => '', 'notes' => '');
-        echo '<section class="sn-panel sn-form-panel" id="sn-license-form"><h3>' . ($edit ? 'Modifica licenza' : 'Registra una licenza') . '</h3>';
-        Integra_Sentinel_Admin::form_start('license_save', 'integra-sentinel-licenses', array('id' => $entry['id']));
-        echo '<div class="sn-form-grid">';
-        echo '<label>Prodotto<input type="text" name="product" required maxlength="120" value="' . esc_attr($entry['product']) . '" placeholder="Elementor Pro"></label>';
-        echo '<label>Slug coperti (separati da virgola)<input type="text" name="slugs" required value="' . esc_attr(implode(', ', (array) $entry['slugs'])) . '" placeholder="elementor-pro"></label>';
-        echo '<label>Tipo<select name="type">';
-        foreach (Integra_Sentinel_Licenses::types() as $key => $label) { echo '<option value="' . esc_attr($key) . '"' . selected($entry['type'], $key, false) . '>' . self::e($label) . '</option>'; }
-        echo '</select></label>';
-        echo '<label>Numero di siti (solo “numero di siti”)<input type="number" min="1" name="seats" value="' . (int) ($entry['seats'] ?: 1) . '"></label>';
-        echo '<label>Scadenza<input type="date" name="expires" value="' . esc_attr($entry['expires']) . '"></label>';
-        echo '<label>Costo annuo (€)<input type="number" min="0" step="0.01" name="cost" value="' . esc_attr((string) $entry['cost']) . '"></label>';
-        echo '<label>Chi paga il rinnovo<select name="payer"><option value="agenzia"' . selected($entry['payer'], 'agenzia', false) . '>Agenzia</option><option value="cliente"' . selected($entry['payer'], 'cliente', false) . '>Cliente</option></select></label>';
-        echo '<label>Pagina del fornitore<input type="url" name="vendor_url" value="' . esc_attr($entry['vendor_url']) . '" placeholder="https://"></label>';
-        echo '<label class="sn-span-2">Siti coperti (licenze del cliente o con siti assegnati; vuoto = tutti)<select name="sites[]" multiple size="5">';
-        foreach ($sites as $id => $site) { echo '<option value="' . esc_attr($id) . '"' . (in_array($id, (array) $entry['sites'], true) ? ' selected' : '') . '>' . self::e($site['label']) . '</option>'; }
-        echo '</select></label>';
-        echo '<label class="sn-span-2">Note<textarea name="notes" rows="2">' . esc_textarea($entry['notes']) . '</textarea></label>';
-        echo '</div>';
-        submit_button($edit ? 'Salva modifiche' : 'Registra licenza', 'primary', 'submit', false);
-        echo '</form></section>';
-    }
-
-    private static function envato_panel($sites) {
-        $cfg = Integra_Sentinel_Intel::envato_config();
-        $items = Integra_Sentinel_Intel::envato_items();
-        echo '<section class="sn-panel" id="sn-envato"><div class="sn-section-head"><div><h3>Acquisti Envato (ThemeForest e CodeCanyon)</h3><p>Con un token personale Envato il Master legge ogni giorno gli acquisti dell’agenzia e ne ricava le ultime versioni: i premium Envato non risultano più “punti ciechi”. Il token resta sul Master, cifrato.</p></div>'
-            . self::badge(!empty($cfg['token']) ? 'Collegato' : 'Non collegato', !empty($cfg['token']) ? 'ok' : 'muted') . '</div>';
-        if (!empty($cfg['token'])) {
-            echo '<p class="sn-hint">Ultima lettura: ' . (!empty($cfg['at']) ? self::e(wp_date('d/m/Y H:i', (int) $cfg['at'])) : 'mai') . ' · ' . count($items) . ' prodotti' . (!empty($cfg['error']) ? ' · <strong>' . self::e($cfg['error']) . '</strong>' : '') . '</p>';
-        }
-        if (current_user_can('manage_options')) {
-            Integra_Sentinel_Admin::form_start('envato_token', 'integra-sentinel-licenses', array('_sn_anchor' => 'sn-envato'));
-            echo '<p><label>Token personale Envato (permesso “Visualizza e cerca i tuoi acquisti”)<br><input type="password" class="regular-text" name="envato_token" autocomplete="new-password" placeholder="' . (!empty($cfg['token']) ? 'Token già salvato: inseriscine uno nuovo per sostituirlo' : 'Incolla il token creato su build.envato.com') . '"></label></p>';
-            echo '<p><label><input type="checkbox" name="remove" value="1"> Rimuovi il token salvato</label></p>';
-            submit_button('Salva token', 'secondary', 'submit', false);
-            echo '</form>';
-        }
-        if (!empty($cfg['token']) && Integra_Sentinel_Settings::can_manage()) {
-            Integra_Sentinel_Admin::form_start('envato_refresh', 'integra-sentinel-licenses', array('_sn_anchor' => 'sn-envato'));
-            echo '<p><button type="submit" class="button">Leggi gli acquisti adesso</button></p></form>';
-        }
-        if ($items) {
-            $matched = Integra_Sentinel_Intel::envato_catalog($sites, 'plugin') + Integra_Sentinel_Intel::envato_catalog($sites, 'theme');
-            $by_id = array();
-            foreach ($matched as $slug => $m) { $by_id[(int) $m['envato_id']][] = $slug; }
-            echo '<details class="sn-nested-details"><summary>' . count($items) . ' acquisti letti</summary><table class="sn-simple-table"><thead><tr><th>Prodotto</th><th>Versione</th><th>Supporto fino al</th><th>Nel parco</th></tr></thead><tbody>';
-            foreach ($items as $item) {
-                echo '<tr><td>' . self::e($item['name']) . ' ' . self::badge($item['kind'] === 'theme' ? 'Tema' : 'Plugin', 'muted') . '</td><td>' . self::e($item['version'] ?: '—') . '</td><td>'
-                    . self::e($item['supported_until'] ? wp_date('d/m/Y', strtotime($item['supported_until'] . ' 12:00:00')) : '—') . '</td><td>' . (isset($by_id[(int) $item['id']]) ? '<code>' . self::e(implode(', ', $by_id[(int) $item['id']])) . '</code>' : '—') . '</td></tr>';
-            }
-            echo '</tbody></table><p class="sn-hint">Le licenze Envato sono perpetue: la scadenza del supporto non impedisce di scaricare gli aggiornamenti dal proprio account.</p></details>';
-        }
-        echo '</section>';
-    }
-
-    /* ---------- Interventi ---------- */
-
-    public static function tasks() {
-        $sites = Integra_Sentinel_Master::sites();
-        $statuses = Integra_Sentinel_Store::task_statuses();
-        $filter = isset($_GET['status']) ? sanitize_key(wp_unslash($_GET['status'])) : 'active';
-        $mine = !empty($_GET['mine']);
-        $tasks = Integra_Sentinel_Store::tasks(array('status' => $filter === 'all' ? '' : $filter, 'assignee' => $mine ? get_current_user_id() : 0, 'limit' => 500));
-        $counts = Integra_Sentinel_Store::task_counts();
-        $users = array();
-        foreach (self::users() as $u) { $users[(int) $u->ID] = $u->display_name; }
-        $manage = Integra_Sentinel_Settings::can_manage();
-        Integra_Sentinel_Admin::open('integra-sentinel-tasks', $manage ? '<a class="button button-primary" href="#sn-task-form">+ Nuovo intervento</a>' : '');
-        echo '<section class="sn-page-heading"><div><p class="sn-kicker">INTERVENTI</p><h2>Chi fa cosa, e quando</h2><p>Crea interventi dai colli di bottiglia o a mano. Quando il problema collegato sparisce dai dati del sito, l’intervento si chiude da solo.</p></div></section>';
-        echo '<div class="sn-chips sn-chips-links" role="navigation" aria-label="Filtra interventi">';
-        $active_total = 0;
-        foreach ($counts as $status => $n) { if ($status !== 'done') { $active_total += $n; } }
-        $links = array('active' => 'Aperti (' . $active_total . ')') + array_map(function($label) { return $label; }, $statuses) + array('all' => 'Tutti');
-        foreach ($links as $key => $label) {
-            $label = isset($statuses[$key]) ? $label . ' (' . (int) ($counts[$key] ?? 0) . ')' : $label;
-            echo '<a class="sn-chip' . ($filter === $key ? ' is-selected' : '') . '" href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-tasks', array('status' => $key) + ($mine ? array('mine' => 1) : array()))) . '">' . self::e($label) . '</a>';
-        }
-        echo '<a class="sn-chip' . ($mine ? ' is-selected' : '') . '" href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-tasks', array('status' => $filter) + ($mine ? array() : array('mine' => 1)))) . '">Solo i miei</a></div>';
-        echo '<section class="sn-section"><div class="sn-table-wrap"><table class="sn-simple-table sn-tasks"><thead><tr><th>Intervento</th><th>Sito</th><th>Assegnato</th><th>Scadenza</th><th>Stato</th><th>Tempo</th><th></th></tr></thead><tbody>';
-        if (!$tasks) { echo '<tr><td colspan="7" class="sn-muted">Nessun intervento con questo filtro.</td></tr>'; }
-        $today = wp_date('Y-m-d');
-        foreach ($tasks as $t) {
-            $late = $t['due_date'] && $t['due_date'] < $today && $t['status'] !== 'done';
-            echo '<tr><td><strong>' . self::e($t['title']) . '</strong>' . ($t['kind'] !== '' ? '<br><small>' . self::e(Integra_Sentinel_Fleet::kind_label($t['kind'])) . ($t['subject'] !== '' ? ' · <code>' . self::e($t['subject']) . '</code>' : '') . '</small>' : '')
-                . ($t['notes'] !== '' ? '<details class="sn-task-notes"><summary>Note</summary><p>' . nl2br(self::e($t['notes'])) . '</p></details>' : '') . '</td>';
-            echo '<td>' . (isset($sites[$t['site_id']]) ? '<a href="' . esc_url(Integra_Sentinel_Master::sn_admin_url($t['site_id'])) . '">' . self::e($sites[$t['site_id']]['label']) . '</a>' : '—') . '</td>';
-            echo '<td>' . self::e($users[(int) $t['assignee']] ?? '—') . '</td><td>' . ($t['due_date'] ? ($late ? self::badge(wp_date('d/m/Y', strtotime($t['due_date'] . ' 12:00:00')), 'danger') : self::e(wp_date('d/m/Y', strtotime($t['due_date'] . ' 12:00:00')))) : '—') . '</td><td>';
-            if ($manage) {
-                Integra_Sentinel_Admin::form_start('task_status', 'integra-sentinel-tasks', array('id' => $t['id']), 'sn-inline-form');
-                echo '<select name="status" aria-label="Stato dell’intervento" onchange="this.form.submit()">';
-                foreach ($statuses as $key => $label) { echo '<option value="' . esc_attr($key) . '"' . selected($t['status'], $key, false) . '>' . self::e($label) . '</option>'; }
-                echo '</select><noscript><button class="button button-small" type="submit">OK</button></noscript></form>';
-            } else { echo self::e($statuses[$t['status']] ?? $t['status']); }
-            echo '</td><td>' . ((int) $t['minutes'] ? self::e(Integra_Sentinel_Admin::minutes_text((int) $t['minutes'])) : '—') . '</td><td class="sn-row-actions">';
-            if ($manage) {
-                echo '<a class="button button-small" href="' . esc_url(Integra_Sentinel_Admin::url('integra-sentinel-tasks', array('task' => $t['id'], 'status' => $filter)) . '#sn-task-form') . '">Modifica</a>';
-                Integra_Sentinel_Admin::form_start('task_delete', 'integra-sentinel-tasks', array('id' => $t['id']));
-                echo '<button class="button button-small" type="submit" onclick="return confirm(\'Eliminare questo intervento?\')">Elimina</button></form>';
-            }
-            echo '</td></tr>';
-        }
-        echo '</tbody></table></div></section>';
-        if ($manage) {
-            $task = isset($_GET['task']) ? Integra_Sentinel_Store::task_get(absint($_GET['task'])) : null;
-            $t = $task ?: array('id' => 0, 'site_id' => isset($_GET['site']) ? sanitize_text_field(wp_unslash($_GET['site'])) : '', 'title' => '', 'kind' => '', 'subject' => '', 'status' => 'open', 'assignee' => get_current_user_id(),
-                'due_date' => '', 'minutes' => 0, 'notes' => '');
-            echo '<section class="sn-panel sn-form-panel" id="sn-task-form"><h3>' . ($task ? 'Modifica intervento' : 'Nuovo intervento') . '</h3>';
-            Integra_Sentinel_Admin::form_start('task_save', 'integra-sentinel-tasks', array('id' => $t['id'], 'kind' => $t['kind'], 'subject' => $t['subject']));
-            echo '<div class="sn-form-grid"><label class="sn-span-2">Titolo<input type="text" name="title" required maxlength="200" value="' . esc_attr($t['title']) . '"></label>';
-            echo '<label>Sito' . self::site_select('site_id', $t['site_id'], $sites, 'Nessun sito / più siti') . '</label>';
-            echo '<label>Assegnato a' . self::user_select('assignee', $t['assignee']) . '</label>';
-            echo '<label>Stato<select name="status">';
-            foreach ($statuses as $key => $label) { echo '<option value="' . esc_attr($key) . '"' . selected($t['status'], $key, false) . '>' . self::e($label) . '</option>'; }
-            echo '</select></label><label>Scadenza<input type="date" name="due_date" value="' . esc_attr((string) $t['due_date']) . '"></label>';
-            echo '<label>Minuti impiegati<input type="number" min="0" name="minutes" value="' . (int) $t['minutes'] . '"></label>';
-            echo '<label class="sn-span-2">Note<textarea name="notes" rows="3">' . esc_textarea($t['notes']) . '</textarea></label></div>';
-            submit_button($task ? 'Salva intervento' : 'Crea intervento', 'primary', 'submit', false);
-            echo '</form></section>';
-        }
-        Integra_Sentinel_Admin::close();
     }
 
     /* ---------- Storico ---------- */
@@ -501,12 +284,45 @@ final class Integra_Sentinel_Admin_Pages {
 
     /* ---------- Impostazioni ---------- */
 
+    private static function envato_panel($sites) {
+        $cfg = Integra_Sentinel_Intel::envato_config();
+        $items = Integra_Sentinel_Intel::envato_items();
+        echo '<section class="sn-panel" id="sn-envato"><div class="sn-section-head"><div><h3>Acquisti Envato (ThemeForest e CodeCanyon)</h3><p>Con un token personale Envato il Master legge ogni giorno gli acquisti dell’agenzia e ne ricava le ultime versioni: i premium Envato non risultano più “punti ciechi”. Il token resta sul Master, cifrato.</p></div>'
+            . self::badge(!empty($cfg['token']) ? 'Collegato' : 'Non collegato', !empty($cfg['token']) ? 'ok' : 'muted') . '</div>';
+        if (!empty($cfg['token'])) {
+            echo '<p class="sn-hint">Ultima lettura: ' . (!empty($cfg['at']) ? self::e(wp_date('d/m/Y H:i', (int) $cfg['at'])) : 'mai') . ' · ' . count($items) . ' prodotti' . (!empty($cfg['error']) ? ' · <strong>' . self::e($cfg['error']) . '</strong>' : '') . '</p>';
+        }
+        if (current_user_can('manage_options')) {
+            Integra_Sentinel_Admin::form_start('envato_token', 'integra-sentinel-settings', array('_sn_anchor' => 'sn-envato'));
+            echo '<p><label>Token personale Envato (permesso “Visualizza e cerca i tuoi acquisti”)<br><input type="password" class="regular-text" name="envato_token" autocomplete="new-password" placeholder="' . (!empty($cfg['token']) ? 'Token già salvato: inseriscine uno nuovo per sostituirlo' : 'Incolla il token creato su build.envato.com') . '"></label></p>';
+            echo '<p><label><input type="checkbox" name="remove" value="1"> Rimuovi il token salvato</label></p>';
+            submit_button('Salva token', 'secondary', 'submit', false);
+            echo '</form>';
+        }
+        if (!empty($cfg['token']) && Integra_Sentinel_Settings::can_manage()) {
+            Integra_Sentinel_Admin::form_start('envato_refresh', 'integra-sentinel-settings', array('_sn_anchor' => 'sn-envato'));
+            echo '<p><button type="submit" class="button">Leggi gli acquisti adesso</button></p></form>';
+        }
+        if ($items) {
+            $matched = Integra_Sentinel_Intel::envato_catalog($sites, 'plugin') + Integra_Sentinel_Intel::envato_catalog($sites, 'theme');
+            $by_id = array();
+            foreach ($matched as $slug => $m) { $by_id[(int) $m['envato_id']][] = $slug; }
+            echo '<details class="sn-nested-details"><summary>' . count($items) . ' acquisti letti</summary><table class="sn-simple-table"><thead><tr><th>Prodotto</th><th>Versione</th><th>Supporto fino al</th><th>Nel parco</th></tr></thead><tbody>';
+            foreach ($items as $item) {
+                echo '<tr><td>' . self::e($item['name']) . ' ' . self::badge($item['kind'] === 'theme' ? 'Tema' : 'Plugin', 'muted') . '</td><td>' . self::e($item['version'] ?: '—') . '</td><td>'
+                    . self::e($item['supported_until'] ? wp_date('d/m/Y', strtotime($item['supported_until'] . ' 12:00:00')) : '—') . '</td><td>' . (isset($by_id[(int) $item['id']]) ? '<code>' . self::e(implode(', ', $by_id[(int) $item['id']])) . '</code>' : '—') . '</td></tr>';
+            }
+            echo '</tbody></table><p class="sn-hint">Le licenze Envato sono perpetue: la scadenza del supporto non impedisce di scaricare gli aggiornamenti dal proprio account.</p></details>';
+        }
+        echo '</section>';
+    }
+
     public static function settings() {
         $manage = Integra_Sentinel_Settings::can_manage();
         $admin = current_user_can('manage_options');
         Integra_Sentinel_Admin::open('integra-sentinel-settings');
         echo '<section class="sn-page-heading"><div><p class="sn-kicker">IMPOSTAZIONI</p><h2>Notifiche, fonti, politiche e accessi</h2><p>Tutto resta sul Master: i siti dei clienti non ricevono né salvano queste impostazioni.</p></div></section>';
-        echo '<nav class="sn-subnav" aria-label="Sezioni delle impostazioni"><a href="#sn-mail">Email</a><a href="#sn-webhooks">Slack · Telegram · Make</a><a href="#sn-sources">Fonti dati</a><a href="#sn-deps-settings">Catalogo premium</a><a href="#sn-policies">Politiche</a><a href="#sn-stack">Stack e stime</a><a href="#sn-ai">Intelligenza artificiale</a><a href="#sn-branding">Marchio report</a><a href="#sn-access">Accessi</a><a href="#sn-audit">Registro attività</a></nav>';
+        echo '<nav class="sn-subnav" aria-label="Sezioni delle impostazioni"><a href="#sn-mail">Email</a><a href="#sn-webhooks">Slack · Telegram · Make</a><a href="#sn-sources">Fonti dati</a><a href="#sn-envato">Envato</a><a href="#sn-deps-settings">Catalogo premium</a><a href="#sn-policies">Politiche</a><a href="#sn-stack">Stack e stime</a><a href="#sn-ai">Intelligenza artificiale</a><a href="#sn-branding">Marchio report</a><a href="#sn-access">Accessi</a><a href="#sn-audit">Registro attività</a></nav>';
         if (!$manage) { echo '<div class="notice notice-info inline"><p>Hai accesso in sola visione: le impostazioni sono modificabili da chi gestisce Sentinel.</p></div>'; Integra_Sentinel_Admin::close(); return; }
 
         echo '<section class="sn-panel" id="sn-mail">';
@@ -547,6 +363,8 @@ final class Integra_Sentinel_Admin_Pages {
         Integra_Sentinel_Master::wpscan_settings(Integra_Sentinel_Master::sites(), 'integra-sentinel-settings');
         echo '</section>';
 
+        self::envato_panel(Integra_Sentinel_Master::sites());
+
         Integra_Sentinel_Master::dependency_settings_form('integra-sentinel-settings');
 
         $p = Integra_Sentinel_Settings::get('policies');
@@ -558,11 +376,11 @@ final class Integra_Sentinel_Admin_Pages {
         echo '<label>Quarantena delle nuove versioni x.y.0 (giorni)<input type="number" min="0" max="30" name="quarantine_days" value="' . (int) $p['quarantine_days'] . '"></label>';
         echo '<label>Quarantena applicata a<select name="quarantine_scope"><option value="hubs"' . selected($p['quarantine_scope'], 'hubs', false) . '>Plugin principali (WooCommerce, Elementor…)</option><option value="all"' . selected($p['quarantine_scope'], 'all', false) . '>Tutti i plugin WordPress.org</option><option value="off"' . selected($p['quarantine_scope'], 'off', false) . '>Disattivata</option></select></label>';
         echo '<label>Plugin abbandonato dopo (anni senza aggiornamenti)<input type="number" min="1" max="6" name="abandoned_years" value="' . (int) $p['abandoned_years'] . '"></label>';
+        echo '<label>Plugin fuori repository: ricontrolla dopo (giorni dall’ultimo “aggiornato all’ultima versione”)<input type="number" min="7" max="365" name="recheck_days" value="' . (int) ($p['recheck_days'] ?? 60) . '"></label>';
         echo '<label>Backup considerato vecchio dopo (giorni)<input type="number" min="1" max="90" name="backup_max_days" value="' . (int) $p['backup_max_days'] . '"></label>';
         echo '<label>Spazio libero minimo (MB)<input type="number" min="100" name="disk_min_mb" value="' . (int) $p['disk_min_mb'] . '"></label>';
         echo '<label>Controllo raggiungibilità ogni (minuti)<input type="number" min="5" max="240" name="probe_minutes" value="' . (int) $p['probe_minutes'] . '"></label>';
         echo '<label>Tolleranza dopo la rigenerazione chiave (giorni)<input type="number" min="0" max="30" name="rotation_grace_days" value="' . (int) $p['rotation_grace_days'] . '"></label>';
-        echo '<label class="sn-inline-check"><input type="checkbox" name="license_reminders" value="1"' . checked(!empty($p['license_reminders']), true, false) . '> Promemoria licenze a 30 e 7 giorni</label>';
         echo '<label class="sn-span-2">Versioni da evitare (una per riga: <code>slug | versione o intervallo | nota</code>)<textarea name="bad_versions" rows="4" class="code" spellcheck="false" placeholder="elementor | 3.25.0 | rompe l’header&#10;woocommerce | >=9.4.0,<9.4.2 | bug al checkout">' . esc_textarea(implode("\n", $bad)) . '</textarea></label>';
         echo '<label class="sn-span-2">Periodi di blocco (una per riga: <code>AAAA-MM-GG > AAAA-MM-GG | etichetta | tag</code>; senza tag valgono per tutti i siti)<textarea name="freezes" rows="3" class="code" spellcheck="false" placeholder="2026-11-20 > 2026-12-02 | Black Friday | ecommerce">' . esc_textarea(implode("\n", $freezes)) . '</textarea></label>';
         echo '</div>';
@@ -630,7 +448,7 @@ final class Integra_Sentinel_Admin_Pages {
         echo '<p class="sn-hint">Il Master conosce tutti i siti dei clienti: proteggi gli accessi con la verifica in due passaggi. Dai siti arrivano solo i nomi utente degli amministratori, non le email; se un Client ne inviasse, il Master le maschera.</p>';
         if ($admin) {
             Integra_Sentinel_Admin::form_start('roles', 'integra-sentinel-settings', array('_sn_anchor' => 'sn-access'));
-            echo '<table class="sn-simple-table"><thead><tr><th>Ruolo</th><th>Vede Sentinel</th><th>Gestisce (interventi, eccezioni, licenze, impostazioni)</th></tr></thead><tbody>';
+            echo '<table class="sn-simple-table"><thead><tr><th>Ruolo</th><th>Vede Sentinel</th><th>Gestisce (eccezioni, verifiche, impostazioni)</th></tr></thead><tbody>';
             foreach (wp_roles()->get_names() as $key => $label) {
                 if ($key === 'administrator') { echo '<tr><td>' . self::e(translate_user_role($label)) . '</td><td>Sempre</td><td>Sempre</td></tr>'; continue; }
                 echo '<tr><td>' . self::e(translate_user_role($label)) . '</td><td><input type="checkbox" name="view[]" value="' . esc_attr($key) . '"' . checked(in_array($key, (array) $roles['view'], true), true, false) . ' aria-label="Visione per ' . esc_attr($label) . '"></td><td><input type="checkbox" name="manage[]" value="' . esc_attr($key) . '"' . checked(in_array($key, (array) $roles['manage'], true), true, false) . ' aria-label="Gestione per ' . esc_attr($label) . '"></td></tr>';
@@ -653,7 +471,7 @@ final class Integra_Sentinel_Admin_Pages {
             echo '</tbody></table></div>';
         }
         Integra_Sentinel_Admin::form_start('daily_now', 'integra-sentinel-settings', array('_sn_anchor' => 'sn-audit'));
-        echo '<p class="sn-hint">I lavori giornalieri (andamenti, promemoria licenze, chiusura interventi, pulizia archivio) partono da soli una volta al giorno. <button class="button button-small" type="submit">Eseguili adesso</button></p></form>';
+        echo '<p class="sn-hint">I lavori giornalieri (andamenti, pulizia archivio, bozze automatiche) partono da soli una volta al giorno. <button class="button button-small" type="submit">Eseguili adesso</button></p></form>';
         echo '</section>';
         Integra_Sentinel_Admin::close();
     }
@@ -686,19 +504,30 @@ final class Integra_Sentinel_Admin_Pages {
         echo '</div></section>';
     }
 
-    /** Temi: origine, licenza, child theme, personalizzazioni, plugin inclusi. */
-    public static function themes_panel($analysis) {
-        $rows = array_values(array_filter($analysis['themes']['themes'], function($t) { return $t['role'] !== ''; }));
-        $inactive = count($analysis['themes']['themes']) - count($rows);
-        echo '<section class="sn-panel sn-themes"><div class="sn-section-head"><div><h3>Temi in uso</h3><p>Tema attivo e tema genitore: canale di aggiornamento, licenza, child theme e personalizzazioni.</p></div>' . ($inactive ? self::badge($inactive . ' inattivi', 'muted') : '') . '</div>';
-        if (!$rows) { echo '<p class="sn-muted">Dati del tema non disponibili.</p></section>'; return; }
+    /** Temi installati: tema attivo e genitore in alto, poi gli inattivi; canale, licenza, child theme e vulnerabilita'. */
+    public static function themes_panel($analysis, $groups = array()) {
+        $rows = $analysis['themes']['themes'];
+        usort($rows, function($a, $b) {
+            $rank = array('active' => 0, 'parent' => 1, '' => 2);
+            return (($rank[$a['role']] ?? 2) <=> ($rank[$b['role']] ?? 2)) ?: strcasecmp($a['name'], $b['name']);
+        });
+        $inactive = count(array_filter($rows, function($t) { return $t['role'] === ''; }));
+        echo '<section class="sn-panel sn-themes" id="sn-themes"><div class="sn-section-head"><div><h3>Temi installati <span class="sn-title-count">' . count($rows) . '</span></h3><p>Tema attivo e tema genitore: canale di aggiornamento, licenza, child theme e personalizzazioni. I temi inattivi restano aggiornabili e attaccabili: se non servono, conviene eliminarli.</p></div>' . ($inactive ? self::badge($inactive . ' inattivi', 'muted') : '') . '</div>';
+        if (!$rows) { echo '<p class="sn-muted">Dati dei temi non disponibili.</p></section>'; return; }
         echo '<ul class="sn-origin-list">';
         foreach ($rows as $t) {
             $to = $t['update'] !== '' ? $t['update'] : $t['latest'];
-            echo '<li><div><strong>' . self::e($t['name']) . '</strong> ' . self::badge($t['role'] === 'active' ? ($t['parent'] !== '' ? 'Child theme attivo' : 'Tema attivo') : 'Tema genitore', 'brand')
-                . ($t['premium'] ? ' ' . self::badge($t['envato'] ? 'Envato' : 'Premium', 'premium') : '') . '<small>' . self::e($t['originLabel']) . '</small>';
+            $group = $groups['theme:' . $t['slug']] ?? null;
+            $role = $t['role'] === 'active' ? ($t['parent'] !== '' ? 'Child theme attivo' : 'Tema attivo') : ($t['role'] === 'parent' ? 'Tema genitore' : 'Inattivo');
+            echo '<li id="sn-plugin-' . esc_attr(sanitize_html_class($t['slug'])) . '"><div><strong>' . self::e($t['name']) . '</strong> ' . self::badge($role, $t['role'] !== '' ? 'brand' : 'muted')
+                . ($t['premium'] ? ' ' . self::badge($t['envato'] ? 'Envato' : 'Premium', 'premium') : '') . ($group ? ' ' . self::badge($group['count'] . ' vulnerabilità', $group['max_tier']) : '') . '<small>' . self::e($t['originLabel']) . '</small>';
             foreach (array_slice($t['reasons'], 0, 3) as $reason) { echo '<small>' . self::e($reason) . '</small>'; }
             if ($t['noChild']) { echo '<small>Nessun child theme: eventuali modifiche ai file del tema andrebbero perse con l’aggiornamento.</small>'; }
+            if ($group) {
+                echo '<details class="sn-nested-details"><summary>Advisory ' . self::e($t['name']) . ' (' . (int) $group['count'] . ')</summary>';
+                Integra_Sentinel_Master::sn_advisory_rows($group['items']);
+                echo '</details>';
+            }
             echo '</div><div class="sn-origin-ver">' . Integra_Sentinel_Master::sn_version_step($t['version'], $to !== $t['version'] ? $to : '') . Integra_Sentinel_Master::sn_badge(Integra_Sentinel_Dependencies::status_label($t['status']), Integra_Sentinel_Master::sn_status_tone($t['status'])) . '</div></li>';
         }
         echo '</ul></section>';

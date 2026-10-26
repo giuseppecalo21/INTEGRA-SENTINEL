@@ -3,7 +3,7 @@ Contributors: integra
 Tags: wordpress, vulnerability, monitoring, security, updates
 Requires at least: 6.5
 Requires PHP: 7.4
-Stable tag: 1.10.0
+Stable tag: 1.11.0
 License: GPLv2 or later
 
 Monitoraggio centralizzato degli aggiornamenti e delle vulnerabilita di siti WordPress.
@@ -11,6 +11,16 @@ Author: Integra | https://integracorporate.it/
 
 Principio: il Master e' in SOLA LETTURA verso i siti dei clienti. Non installa, non aggiorna e non modifica nulla:
 riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il lavoro pesante resta sul Master.
+
+== 1.11.0 - 26 October 2026 ==
+* Tolte le pagine Interventi e Licenze, con i promemoria delle licenze, la chiusura automatica degli interventi e le voci collegate in panoramica, email e report. I dati gia' salvati restano nel database ma non si usano piu'. Il collegamento Envato (versioni dei premium acquistati) passa in Impostazioni.
+* Colli di bottiglia: dentro ogni causa una riga per sito, con prima il sito e poi il componente. Tolti "chi deve agire" e l'assegnazione.
+* Plugin fuori repository (premium da aggiornare a mano, punti ciechi, inclusi nel tema): pulsante "Aggiornato all'ultima versione". L'elemento esce dall'elenco e torna da ricontrollare dopo 30, 60, 90 o 180 giorni (predefinito in Impostazioni → Politiche).
+* Compatibilita' non dichiarata: "Provato: funziona" la toglie dall'elenco finche' non cambiano le versioni coinvolte; "In attesa di aggiornamento" la lascia in fondo all'elenco con la data.
+* Eccezione su ogni riga, con motivo facoltativo, data di scadenza e opzione "su tutti i siti". Nuova tabella "Eccezioni e verifiche" con tutto quello che e' stato segnato.
+* Plugin e temi: schede separate Plugin e Temi, un pulsante per ogni sito da accendere o spegnere (la scelta resta memorizzata nel browser); siti, versioni, aggiornamenti e problemi si ricalcolano sui siti accesi. Tolte le ondate di aggiornamento.
+* Scheda sito: nuovo pannello "Temi installati" con tutti i temi (attivo, genitore e inattivi), canale, child theme e vulnerabilita'. Tolto l'elenco dei Must-Use Plugins e Drop-in.
+* Integra Sentinel non viene mai segnalato: escluso da sconosciuti, fuori repository, colli di bottiglia e doppioni, anche se la cartella del plugin ha un nome diverso (per esempio scaricata da GitHub).
 
 == 1.10.0 - 26 October 2026 ==
 * Scheda sito: i plugin installati sono divisi in tre gruppi a scomparsa, "Da aggiornare", "Fuori repository" e "Aggiornati", con il numero di plugin e quelli con vulnerabilita' in testata. "Da aggiornare" e "Fuori repository" sono aperti; "Aggiornati" si apre da solo se contiene plugin vulnerabili. La ricerca apre i gruppi con risultati e nasconde quelli vuoti.

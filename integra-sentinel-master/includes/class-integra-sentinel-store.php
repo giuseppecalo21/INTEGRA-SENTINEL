@@ -33,7 +33,7 @@ final class Integra_Sentinel_Store {
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         $charset = $wpdb->get_charset_collate();
         $t = array();
-        foreach (array('events', 'tasks', 'audit', 'probes', 'metrics', 'drafts') as $name) { $t[$name] = self::table($name); }
+        foreach (array('events', 'audit', 'probes', 'metrics', 'drafts') as $name) { $t[$name] = self::table($name); }
         dbDelta("CREATE TABLE {$t['events']} (
   id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   site_id varchar(36) NOT NULL DEFAULT '',
@@ -45,25 +45,6 @@ final class Integra_Sentinel_Store {
   PRIMARY KEY  (id),
   KEY site_at (site_id,at),
   KEY at (at)
-) $charset;");
-        dbDelta("CREATE TABLE {$t['tasks']} (
-  id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-  site_id varchar(36) NOT NULL DEFAULT '',
-  title varchar(255) NOT NULL DEFAULT '',
-  kind varchar(30) NOT NULL DEFAULT '',
-  subject varchar(120) NOT NULL DEFAULT '',
-  status varchar(20) NOT NULL DEFAULT 'open',
-  assignee bigint(20) unsigned NOT NULL DEFAULT 0,
-  due_date date DEFAULT NULL,
-  minutes int(10) unsigned NOT NULL DEFAULT 0,
-  notes text NOT NULL,
-  created_by bigint(20) unsigned NOT NULL DEFAULT 0,
-  created_at int(10) unsigned NOT NULL DEFAULT 0,
-  updated_at int(10) unsigned NOT NULL DEFAULT 0,
-  closed_at int(10) unsigned NOT NULL DEFAULT 0,
-  PRIMARY KEY  (id),
-  KEY site_status (site_id,status),
-  KEY status (status)
 ) $charset;");
         dbDelta("CREATE TABLE {$t['audit']} (
   id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -246,98 +227,6 @@ final class Integra_Sentinel_Store {
         $table = self::table('audit');
         $rows = $wpdb->get_results("SELECT at, user_login, action, site_id, detail FROM {$table} ORDER BY id DESC LIMIT " . max(1, min(1000, (int) $limit)), ARRAY_A);
         return is_array($rows) ? $rows : array();
-    }
-
-    /* ---------- Interventi ---------- */
-
-    public static function task_statuses() {
-        return array('open' => 'Da fare', 'progress' => 'In corso', 'client' => 'In attesa del cliente', 'hosting' => 'In attesa dell’hosting', 'vendor' => 'In attesa del fornitore', 'done' => 'Risolto');
-    }
-
-    public static function task_save($data) {
-        global $wpdb;
-        $table = self::table('tasks');
-        $statuses = self::task_statuses();
-        $row = array(
-            'site_id' => substr((string) ($data['site_id'] ?? ''), 0, 36),
-            'title' => substr(sanitize_text_field((string) ($data['title'] ?? '')), 0, 255),
-            'kind' => substr(sanitize_key((string) ($data['kind'] ?? '')), 0, 30),
-            'subject' => substr(sanitize_text_field((string) ($data['subject'] ?? '')), 0, 120),
-            'status' => isset($statuses[$data['status'] ?? '']) ? $data['status'] : 'open',
-            'assignee' => absint($data['assignee'] ?? 0),
-            'due_date' => (!empty($data['due_date']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $data['due_date'])) ? $data['due_date'] : null,
-            'minutes' => min(100000, absint($data['minutes'] ?? 0)),
-            'notes' => substr(sanitize_textarea_field((string) ($data['notes'] ?? '')), 0, 4000),
-            'updated_at' => time(),
-        );
-        if ($row['title'] === '') { return 0; }
-        $id = absint($data['id'] ?? 0);
-        if ($id) {
-            $old = self::task_get($id);
-            if (!$old) { return 0; }
-            $row['closed_at'] = $row['status'] === 'done' ? ((int) $old['closed_at'] ?: time()) : 0;
-            $wpdb->update($table, $row, array('id' => $id), self::task_formats($row), array('%d'));
-            return $id;
-        }
-        $row['created_by'] = get_current_user_id();
-        $row['created_at'] = time();
-        $row['closed_at'] = $row['status'] === 'done' ? time() : 0;
-        return $wpdb->insert($table, $row, self::task_formats($row)) ? (int) $wpdb->insert_id : 0;
-    }
-
-    /** Formati espliciti: senza, wpdb tratta "site_id" come intero (colonna del multisito) e tronca l'UUID. */
-    private static function task_formats($row) {
-        $ints = array('assignee', 'minutes', 'created_by', 'created_at', 'updated_at', 'closed_at');
-        $formats = array();
-        foreach (array_keys($row) as $key) { $formats[] = in_array($key, $ints, true) ? '%d' : '%s'; }
-        return $formats;
-    }
-
-    public static function task_get($id) {
-        global $wpdb;
-        $table = self::table('tasks');
-        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", absint($id)), ARRAY_A);
-        return is_array($row) ? $row : null;
-    }
-
-    public static function task_set_status($id, $status, $note = '') {
-        global $wpdb;
-        if (!isset(self::task_statuses()[$status])) { return false; }
-        $task = self::task_get($id);
-        if (!$task) { return false; }
-        $fields = array('status' => $status, 'updated_at' => time(), 'closed_at' => $status === 'done' ? ((int) $task['closed_at'] ?: time()) : 0);
-        if ($note !== '') { $fields['notes'] = substr(trim($task['notes'] . "\n" . wp_date('d/m/Y H:i') . ' · ' . $note), 0, 4000); }
-        return false !== $wpdb->update(self::table('tasks'), $fields, array('id' => absint($id)), self::task_formats($fields), array('%d'));
-    }
-
-    public static function task_delete($id) {
-        global $wpdb;
-        return (bool) $wpdb->delete(self::table('tasks'), array('id' => absint($id)), array('%d'));
-    }
-
-    /** @param array $args site_id, status ('open' = tutti tranne risolti), assignee, limit */
-    public static function tasks($args = array()) {
-        global $wpdb;
-        $table = self::table('tasks');
-        $where = array('1=1');
-        if (!empty($args['site_id'])) { $where[] = $wpdb->prepare('site_id = %s', (string) $args['site_id']); }
-        if (!empty($args['status'])) {
-            if ($args['status'] === 'active') { $where[] = "status <> 'done'"; }
-            else { $where[] = $wpdb->prepare('status = %s', (string) $args['status']); }
-        }
-        if (!empty($args['assignee'])) { $where[] = $wpdb->prepare('assignee = %d', absint($args['assignee'])); }
-        $limit = max(1, min(1000, (int) ($args['limit'] ?? 300)));
-        $rows = $wpdb->get_results("SELECT * FROM {$table} WHERE " . implode(' AND ', $where) . " ORDER BY (status = 'done') ASC, (due_date IS NULL) ASC, due_date ASC, id DESC LIMIT {$limit}", ARRAY_A);
-        return is_array($rows) ? $rows : array();
-    }
-
-    public static function task_counts() {
-        global $wpdb;
-        $table = self::table('tasks');
-        $rows = $wpdb->get_results("SELECT status, COUNT(*) AS n FROM {$table} GROUP BY status", ARRAY_A);
-        $out = array();
-        foreach ((array) $rows as $r) { $out[$r['status']] = (int) $r['n']; }
-        return $out;
     }
 
     /* ---------- Resoconti per i clienti (bozze scritte con l'IA o a mano, una per sito e mese) ---------- */

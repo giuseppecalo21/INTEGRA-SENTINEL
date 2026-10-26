@@ -1,7 +1,7 @@
 <?php
 /**
- * Integra Sentinel — lavori giornalieri del Master: metriche per gli andamenti, promemoria delle licenze,
- * chiusura automatica degli interventi risolti, pulizia dell'archivio. Avviati dall'audit orario.
+ * Integra Sentinel — lavori giornalieri del Master: metriche per gli andamenti, pulizia dell'archivio
+ * e bozze automatiche dei resoconti. Avviati dall'audit orario.
  */
 
 if (!defined('ABSPATH')) { exit; }
@@ -22,8 +22,6 @@ final class Integra_Sentinel_Jobs {
             Integra_Sentinel_Fleet::reset();
             $fleet = Integra_Sentinel_Fleet::aggregate();
             self::snapshot_metrics($today, $fleet);
-            self::license_reminders();
-            self::auto_resolve_tasks($fleet);
             Integra_Sentinel_Store::cleanup();
             Integra_Sentinel_Reports::maybe_auto_drafts();
             return true;
@@ -43,45 +41,6 @@ final class Integra_Sentinel_Jobs {
                 'vulns' => count(Integra_Sentinel_Master::sn_group_findings($site['findings'] ?? array())),
                 'integrity' => count((array) ($site['integrity_findings'] ?? array())), 'minutes' => (int) $s['minutes'],
             ));
-        }
-    }
-
-    /** Avvisi a 30 e 7 giorni dalla scadenza e il giorno dopo la scadenza; ogni soglia una sola volta. */
-    public static function license_reminders() {
-        $policies = Integra_Sentinel_Settings::get('policies');
-        if (empty($policies['license_reminders'])) { return; }
-        $sites = Integra_Sentinel_Master::sites();
-        $usage = Integra_Sentinel_Licenses::usage($sites);
-        foreach (Integra_Sentinel_Licenses::expiring(30) as $entry) {
-            $threshold = $entry['days'] < 0 ? 'expired' : ($entry['days'] <= 7 ? '7' : '30');
-            if (in_array($threshold, (array) ($entry['reminded'] ?? array()), true)) { continue; }
-            $used = (array) ($usage[$entry['id']]['sites'] ?? array());
-            $when = $entry['days'] < 0 ? 'scaduta il ' . wp_date('d/m/Y', strtotime($entry['expires'] . ' 12:00:00')) : 'scade tra ' . $entry['days'] . ' giorni (' . wp_date('d/m/Y', strtotime($entry['expires'] . ' 12:00:00')) . ')';
-            $title = 'Licenza ' . $entry['product'] . ' ' . $when;
-            $text = 'Usata su ' . count($used) . ' siti' . ($used ? ': ' . implode(', ', array_slice($used, 0, 8)) . (count($used) > 8 ? '…' : '') : '') . '. '
-                . ($entry['cost'] ? 'Costo indicato: ' . number_format_i18n((float) $entry['cost'], 2) . ' € · ' : '') . 'Paga: ' . ($entry['payer'] === 'cliente' ? 'cliente' : 'agenzia') . '.';
-            $url = admin_url('admin.php?page=integra-sentinel-licenses');
-            $body = Integra_Sentinel_Master::mail_notice($entry['days'] < 0 ? 'LICENZA SCADUTA' : 'LICENZA IN SCADENZA', $text, $entry['days'] <= 7 ? 'danger' : 'warn')
-                . (!empty($entry['vendor_url']) ? Integra_Sentinel_Master::mail_cta('Rinnova dal fornitore', $entry['vendor_url']) : '')
-                . Integra_Sentinel_Master::mail_cta('Apri il registro licenze', $url);
-            $mail = Integra_Sentinel_Master::send_html('[Integra Sentinel] ' . $title, Integra_Sentinel_Master::mail_shell($title, 'Registro licenze dell’agenzia', $body, $entry['days'] <= 7 ? 'danger' : 'warn'));
-            $hook = Integra_Sentinel_Notify::send('license', $title, $text, $url);
-            if ($mail || $hook) { Integra_Sentinel_Licenses::mark_reminded($entry['id'], $threshold); }
-        }
-    }
-
-    /** Un intervento collegato a un collo di bottiglia che non esiste piu' si chiude da solo, con nota. */
-    public static function auto_resolve_tasks($fleet) {
-        foreach (Integra_Sentinel_Store::tasks(array('status' => 'active', 'limit' => 1000)) as $task) {
-            if ($task['kind'] === '' || $task['subject'] === '' || $task['site_id'] === '' || !isset($fleet['per_site'][$task['site_id']])) { continue; }
-            $a = $fleet['per_site'][$task['site_id']];
-            $still = false;
-            foreach (array_merge($a['bottlenecks'], $a['waived']) as $b) {
-                if ($b['kind'] === $task['kind'] && (string) $b['subject'] === (string) $task['subject']) { $still = true; break; }
-            }
-            if (!$still) {
-                Integra_Sentinel_Store::task_set_status((int) $task['id'], 'done', 'Chiuso automaticamente: il problema non risulta più nei dati del sito.');
-            }
         }
     }
 

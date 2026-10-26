@@ -81,6 +81,18 @@ final class Integra_Sentinel_Dependencies {
         return ltrim((string) $v, 'vV');
     }
 
+    /**
+     * Integra Sentinel stesso (Client o Master): mai tra gli sconosciuti, i fuori repository o i colli di bottiglia.
+     * Riconosciuto anche se la cartella ha un nome diverso (es. scaricata da GitHub).
+     */
+    public static function is_own($p) {
+        $slug = strtolower((string) ($p['slug'] ?? ''));
+        $name = strtolower(trim((string) ($p['name'] ?? '')));
+        $file = strtolower((string) ($p['file'] ?? ''));
+        return strpos($slug, 'integra-sentinel') === 0 || strpos($name, 'integra sentinel') === 0
+            || preg_match('#(^|/)integra-sentinel-(client|master)\.php$#', $file) === 1;
+    }
+
     public static function newer($a, $b) {
         if (!self::valid_version($a)) { return false; }
         if (!self::valid_version($b)) { return true; }
@@ -597,7 +609,7 @@ final class Integra_Sentinel_Dependencies {
         }
         $is_bundled = isset($bundled[$slug]) && ($bundled[$slug]['source'] ?? '') !== 'repo';
         $o = array('key' => 'unknown', 'label' => 'Origine non rilevata', 'hint' => '', 'premium' => false, 'envato' => $envato);
-        if (in_array($slug, array('integra-sentinel-client', 'integra-sentinel-master'), true)) {
+        if (self::is_own($p)) {
             return array_merge($o, array('key' => 'internal', 'label' => 'Componente Integra'));
         }
         $framework = array('freemius' => 'Freemius', 'edd' => 'EDD Software Licensing', 'puc' => 'Plugin Update Checker');
@@ -726,6 +738,7 @@ final class Integra_Sentinel_Dependencies {
     private static function bottlenecks($nodes, $edges) {
         $list = array();
         $add = function($node_id, $kind, $severity, $score, $title, $detail, $action, $unlocks, $extra = array()) use (&$list, $nodes) {
+            if (($nodes[$node_id]['origin'] ?? '') === 'internal') { return; }
             $list[] = array_merge(array(
                 'id' => $kind . ':' . $node_id, 'node' => $node_id, 'kind' => $kind, 'severity' => $severity, 'score' => $score,
                 'title' => $title, 'detail' => $detail, 'action' => $action, 'unlocks' => array_values((array) $unlocks),
@@ -771,7 +784,7 @@ final class Integra_Sentinel_Dependencies {
                 $titles = array('missing' => 'chiave di licenza assente', 'expired' => 'licenza scaduta', 'invalid' => 'licenza non valida', 'nopkg' => 'aggiornamento non scaricabile');
                 $action = $n['owner'] === 'cliente' ? 'Chiedere al cliente di rinnovare o acquistare la licenza, poi aggiornare.'
                     : ($n['owner'] === 'agenzia' ? 'Attivare sul sito la licenza dell\'agenzia (registro licenze), poi aggiornare.'
-                    : 'Licenza non registrata: verificare chi la possiede, attivarla sul sito oppure farla rinnovare al cliente.');
+                    : 'Inserire o rinnovare la licenza sul sito (dell\'agenzia o del cliente), poi aggiornare.');
                 $add($id, 'license', $vuln ? 'critical' : ($n['new'] !== '' ? 'high' : 'medium'), $n['score'], $n['name'] . ': ' . ($titles[$n['license']] ?? 'licenza da verificare'),
                     implode(' ', array_slice($n['reasons'], 0, 2)), $action, array($id), array('owner' => $owner, 'security' => $vuln));
             }

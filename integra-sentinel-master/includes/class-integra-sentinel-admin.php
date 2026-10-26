@@ -14,8 +14,6 @@ final class Integra_Sentinel_Admin {
             'integra-sentinel' => 'Panoramica',
             'integra-sentinel-bottlenecks' => 'Colli di bottiglia',
             'integra-sentinel-fleet' => 'Plugin e temi',
-            'integra-sentinel-licenses' => 'Licenze',
-            'integra-sentinel-tasks' => 'Interventi',
             'integra-sentinel-history' => 'Storico',
             'integra-sentinel-reports' => 'Report clienti',
             'integra-sentinel-settings' => 'Impostazioni',
@@ -57,12 +55,10 @@ final class Integra_Sentinel_Admin {
     public static function messages() {
         return array(
             'waiver' => array('Eccezione approvata: l’elemento esce dai conteggi e dagli allarmi fino alla scadenza.', 'success'),
-            'waiver_removed' => array('Eccezione rimossa.', 'success'),
-            'task' => array('Intervento salvato.', 'success'),
-            'tasks' => array('Interventi creati.', 'success'),
-            'task_deleted' => array('Intervento eliminato.', 'success'),
-            'license' => array('Licenza salvata nel registro.', 'success'),
-            'license_deleted' => array('Licenza eliminata dal registro.', 'success'),
+            'verified' => array('Segnato come aggiornato: tornerà nell’elenco per un nuovo controllo alla data scelta.', 'success'),
+            'tested' => array('Segnato come provato: torna nell’elenco solo se cambiano le versioni coinvolte.', 'success'),
+            'waiting' => array('Segnato in attesa dell’aggiornamento del fornitore.', 'success'),
+            'waiver_removed' => array('Segnatura rimossa: l’elemento torna nell’elenco.', 'success'),
             'envato' => array('Token Envato salvato e cifrato. Gli acquisti vengono letti adesso.', 'success'),
             'envato_removed' => array('Token Envato rimosso.', 'success'),
             'envato_ok' => array('Acquisti Envato aggiornati.', 'success'),
@@ -90,7 +86,7 @@ final class Integra_Sentinel_Admin {
             'event_notes_none' => array('Nessun motivo modificato: non c’era niente da salvare.', 'info'),
             'event_notes_partial' => array('Alcuni motivi non sono stati salvati: ricarica la pagina e controlla.', 'error'),
             'draft_approved' => array('Resoconto approvato: ora compare nel report mensile e nell’email al cliente.', 'success'),
-            'daily' => array('Andamenti, promemoria e interventi ricalcolati.', 'success'),
+            'daily' => array('Lavori giornalieri eseguiti: andamenti ricalcolati e archivio ripulito.', 'success'),
             'intel' => array('Dati da WordPress.org ed Envato aggiornati (a lotti: ripeti se il parco è grande).', 'success'),
             'invalid' => array('Dati non validi: nessuna modifica effettuata.', 'error'),
             'denied' => array('Operazione riservata agli amministratori.', 'error'),
@@ -110,14 +106,10 @@ final class Integra_Sentinel_Admin {
     public static function close() { echo '</div>'; }
 
     public static function nav($current) {
-        $counts = Integra_Sentinel_Store::task_counts();
-        $open = 0;
-        foreach ($counts as $status => $n) { if ($status !== 'done') { $open += $n; } }
         echo '<nav class="sn-nav" aria-label="Sezioni di Integra Sentinel">';
         foreach (self::pages() as $slug => $title) {
             $on = $slug === $current;
-            echo '<a class="sn-nav-link' . ($on ? ' is-current' : '') . '" href="' . esc_url(self::url($slug)) . '"' . ($on ? ' aria-current="page"' : '') . '>' . self::e($title)
-                . ($slug === 'integra-sentinel-tasks' && $open ? ' <span class="sn-nav-count">' . (int) $open . '</span>' : '') . '</a>';
+            echo '<a class="sn-nav-link' . ($on ? ' is-current' : '') . '" href="' . esc_url(self::url($slug)) . '"' . ($on ? ' aria-current="page"' : '') . '>' . self::e($title) . '</a>';
         }
         echo '</nav>';
     }
@@ -141,8 +133,6 @@ final class Integra_Sentinel_Admin {
         switch ($page) {
             case 'integra-sentinel-bottlenecks': self::page_bottlenecks(); break;
             case 'integra-sentinel-fleet': self::page_fleet(); break;
-            case 'integra-sentinel-licenses': Integra_Sentinel_Admin_Pages::licenses(); break;
-            case 'integra-sentinel-tasks': Integra_Sentinel_Admin_Pages::tasks(); break;
             case 'integra-sentinel-history': Integra_Sentinel_Admin_Pages::history(); break;
             case 'integra-sentinel-reports': Integra_Sentinel_Admin_Pages::reports(); break;
             case 'integra-sentinel-settings': Integra_Sentinel_Admin_Pages::settings(); break;
@@ -170,75 +160,47 @@ final class Integra_Sentinel_Admin {
             . self::e(is_int($value) ? number_format_i18n($value) : $value) . '</span><span class="sn-ready-sub">' . self::e($sub) . '</span></a>';
     }
 
-    /**
-     * Pannello dei colli di bottiglia del parco, raggruppati per causa e per prodotto.
-     * $compact (panoramica): primi elementi per causa e cause minori chiuse.
-     */
-    public static function bottleneck_center($fleet, $compact = true) {
+    /** Tipi di problema che riguardano i plugin fuori repository: si segnano come aggiornati e si ricontrollano. */
+    public static function recheck_kinds() { return array('blind', 'manual', 'bundled'); }
+
+    /** Pagina Colli di bottiglia: un blocco per causa, dentro una riga per sito e problema. */
+    public static function bottleneck_center($fleet) {
         $kinds = Integra_Sentinel_Fleet::kinds();
-        $owners = Integra_Sentinel_Fleet::owners();
-        $total = (int) $fleet['groups'];
+        $total = (int) $fleet['total'];
         echo '<section class="sn-panel sn-center" id="sn-center" data-sn-center>';
-        echo '<div class="sn-section-head"><div><h3>' . ($compact ? 'Colli di bottiglia del parco' : 'Tutti i colli di bottiglia') . '</h3><p>Cosa non si può aggiornare e perché, raggruppato per causa: una riga è un’azione, anche quando riguarda più siti.</p></div>';
-        echo $compact ? '<a class="button" href="' . esc_url(self::url('integra-sentinel-bottlenecks')) . '">Vista completa →</a>'
-            : '<a class="button" href="' . esc_url(wp_nonce_url(admin_url('admin-post.php?action=integra_sentinel_csv'), 'integra_sentinel_csv')) . '">Esporta CSV</a>';
-        echo '</div>';
+        echo '<div class="sn-section-head"><div><h3>Tutti i colli di bottiglia</h3><p>Divisi per causa. Ogni riga è un sito: prima il sito, poi il componente e cosa fare.</p></div>';
+        echo '<a class="button" href="' . esc_url(wp_nonce_url(admin_url('admin-post.php?action=integra_sentinel_csv'), 'integra_sentinel_csv')) . '">Esporta CSV</a></div>';
         if (!$total) {
             echo '<div class="sn-all-clear"><span aria-hidden="true">✓</span><p><strong>Nessun collo di bottiglia</strong>Nei dati disponibili nessun aggiornamento è bloccato da licenze, addon, server o versioni.</p></div></section>';
             return;
         }
-        echo '<div class="sn-center-tools"><div class="sn-chips" role="group" aria-label="Filtra per chi deve agire"><button type="button" class="sn-chip is-selected" data-sn-owner="all" aria-pressed="true">Tutti <b>' . $total . '</b></button>';
-        foreach ($owners as $key => $label) {
-            if (empty($fleet['owners'][$key])) { continue; }
-            echo '<button type="button" class="sn-chip" data-sn-owner="' . esc_attr($key) . '" aria-pressed="false"><i class="sn-owner-dot sn-owner-' . esc_attr($key) . '" aria-hidden="true"></i>' . self::e($label) . ' <b>' . (int) $fleet['owners'][$key] . '</b></button>';
-        }
-        echo '</div>';
-        if (!$compact) {
-            echo '<label class="sn-search sn-center-search"><span aria-hidden="true">⌕</span><input type="search" data-sn-center-search placeholder="Cerca plugin, tema o sito…" aria-label="Cerca nei colli di bottiglia"></label>';
-        }
-        echo '</div>';
-        $minor = array('blind', 'unknown', 'stack', 'theme', 'backup', 'bundled', 'postupdate');
-        foreach ($fleet['kinds'] as $kind => $groups) {
-            $open = !$compact || !in_array($kind, $minor, true);
-            $site_ids = array();
-            foreach ($groups as $g) { foreach (array_keys($g['sites']) as $sid) { $site_ids[$sid] = true; } }
-            echo '<details class="sn-kind" id="sn-kind-' . esc_attr($kind) . '" data-sn-kind="' . esc_attr($kind) . '"' . ($open ? ' open' : '') . '><summary><span class="sn-kind-title"><strong>' . self::e($kinds[$kind]['label'] ?? $kind) . '</strong><small>'
-                . self::e($kinds[$kind]['hint'] ?? '') . '</small></span><span class="sn-kind-count">' . count($groups) . ' · ' . count($site_ids) . ' ' . (count($site_ids) === 1 ? 'sito' : 'siti') . '</span></summary><div class="sn-kind-body">';
-            $shown = 0;
-            foreach ($groups as $g) {
-                if ($compact && $shown >= 4) {
-                    echo '<a class="sn-more" href="' . esc_url(self::url('integra-sentinel-bottlenecks') . '#sn-kind-' . $kind) . '">Altri ' . (count($groups) - $shown) . ' in questa causa →</a>';
-                    break;
-                }
-                self::group_row($g, $compact);
-                ++$shown;
-            }
+        echo '<div class="sn-center-tools"><label class="sn-search sn-center-search"><span aria-hidden="true">⌕</span><input type="search" data-sn-center-search placeholder="Cerca un sito, un plugin o un tema…" aria-label="Cerca nei colli di bottiglia"></label></div>';
+        $manage = Integra_Sentinel_Settings::can_manage();
+        foreach ($fleet['kinds'] as $kind => $rows) {
+            $site_ids = array_unique(array_column($rows, 'site_id'));
+            echo '<details class="sn-kind" id="sn-kind-' . esc_attr($kind) . '" data-sn-kind="' . esc_attr($kind) . '" open><summary><span class="sn-kind-title"><strong>' . self::e($kinds[$kind]['label'] ?? $kind) . '</strong><small>'
+                . self::e($kinds[$kind]['hint'] ?? '') . '</small></span><span class="sn-kind-count">' . count($rows) . ' · ' . count($site_ids) . ' ' . (count($site_ids) === 1 ? 'sito' : 'siti') . '</span></summary><div class="sn-kind-body">';
+            foreach ($rows as $b) { self::item_row($b, false, $manage); }
             echo '</div></details>';
         }
-        echo '<p class="sn-no-results" data-sn-center-empty hidden>Nessun elemento corrisponde al filtro.</p>';
+        echo '<p class="sn-no-results" data-sn-center-empty hidden>Nessun elemento corrisponde alla ricerca.</p>';
         if ($fleet['waived']) {
-            echo '<p class="sn-hint">' . count($fleet['waived']) . ' eccezioni approvate sono escluse dai conteggi · <a href="' . esc_url(self::url('integra-sentinel-bottlenecks') . '#sn-waivers') . '">vedi le eccezioni</a></p>';
+            echo '<p class="sn-hint">' . count($fleet['waived']) . ' elementi tolti dall’elenco (eccezioni, aggiornati a mano, provati) · <a href="#sn-waivers">vedi</a></p>';
         }
         echo '</section>';
     }
 
-    /** Panoramica: un solo elenco con le cose piu' urgenti di tutto il parco, qualunque sia la causa. */
+    /** Panoramica: le righe piu' urgenti di tutto il parco, qualunque sia la causa. */
     public static function urgent_list($fleet, $limit = 5) {
-        $total = (int) $fleet['groups'];
-        $owners = Integra_Sentinel_Fleet::owners();
-        echo '<section class="sn-panel sn-center"><div class="sn-section-head"><div><h3>Cosa sistemare per primo</h3><p>Ciò che impedisce di aggiornare i siti, dal più urgente. Una riga è un’azione, anche quando riguarda più siti.</p></div>';
+        $total = (int) $fleet['total'];
+        echo '<section class="sn-panel sn-center"><div class="sn-section-head"><div><h3>Cosa sistemare per primo</h3><p>Ciò che impedisce di aggiornare i siti, dal più urgente.</p></div>';
         if ($total) { echo '<a class="button" href="' . esc_url(self::url('integra-sentinel-bottlenecks')) . '">' . ($total > $limit ? 'Vedi tutti (' . $total . ') →' : 'Gestisci →') . '</a>'; }
         echo '</div>';
         if (!$total) {
             echo '<div class="sn-all-clear"><span aria-hidden="true">✓</span><p><strong>Niente da sistemare</strong>Nei dati disponibili nessun aggiornamento è bloccato da licenze, plugin, server o versioni.</p></div></section>';
             return;
         }
-        foreach (Integra_Sentinel_Fleet::top_groups($fleet, $limit) as $g) { self::group_row($g, true); }
-        if ($fleet['owners']) {
-            $parts = array();
-            foreach ($owners as $key => $label) { if (!empty($fleet['owners'][$key])) { $parts[] = $label . ' ' . (int) $fleet['owners'][$key]; } }
-            echo '<p class="sn-hint">Chi deve agire: ' . self::e(implode(' · ', $parts)) . '.</p>';
-        }
+        foreach (Integra_Sentinel_Fleet::top_items($fleet, $limit) as $b) { self::item_row($b, true, false); }
         echo '</section>';
     }
 
@@ -248,61 +210,62 @@ final class Integra_Sentinel_Admin {
         return Integra_Sentinel_Master::sn_admin_url($site_id) . '#' . $anchor;
     }
 
-    private static function group_row($g, $compact) {
-        $owners = Integra_Sentinel_Fleet::owners();
-        $count = count($g['sites']);
-        $first = reset($g['items']);
-        $text = function_exists('mb_strtolower') ? mb_strtolower($g['name'] . ' ' . $g['title'] . ' ' . implode(' ', $g['sites'])) : strtolower($g['name'] . ' ' . $g['title'] . ' ' . implode(' ', $g['sites']));
-        echo '<article class="sn-group sn-sev-' . esc_attr($g['severity']) . '" id="sn-g-' . esc_attr($g['key']) . '" data-sn-owner="' . esc_attr($g['owner']) . '" data-sn-text="' . esc_attr($text) . '">';
-        echo '<div class="sn-group-main"><div class="sn-group-title"><strong>' . self::e($count > 1 ? $g['name'] : $first['title']) . '</strong>';
-        if ($g['security']) { echo self::badge('Sicurezza', 'danger'); }
-        echo self::badge(Integra_Sentinel_Fleet::severity_label($g['severity']), Integra_Sentinel_Fleet::severity_tone($g['severity']));
-        echo '<span class="sn-owner"><i class="sn-owner-dot sn-owner-' . esc_attr($g['owner']) . '" aria-hidden="true"></i>' . self::e($owners[$g['owner']] ?? 'Agenzia') . '</span></div>';
-        if ($count > 1) { echo '<p class="sn-group-sub">' . self::e($first['title']) . '</p>'; }
-        echo '<p>' . self::e($first['detail']) . '</p><p class="sn-group-action"><b>Azione:</b> ' . self::e($first['action']) . '</p>';
-        echo '<div class="sn-group-sites">';
-        $i = 0;
-        foreach ($g['sites'] as $site_id => $label) {
-            if ($compact && $i >= 6) { echo '<span class="sn-site-chip is-more">+' . ($count - $i) . '</span>'; break; }
-            $item = $g['items'][$site_id];
-            echo '<a class="sn-site-chip" href="' . esc_url(self::site_anchor_url($site_id, $item)) . '" title="' . esc_attr($item['title']) . '">' . self::e($label) . '</a>';
-            ++$i;
-        }
-        echo '</div></div><div class="sn-group-side"><span class="sn-group-n">' . $count . '<small>' . ($count === 1 ? 'sito' : 'siti') . '</small></span>'
-            . ($g['unlocks'] ? '<small>sblocca ' . (int) $g['unlocks'] . '</small>' : '') . '<small>~' . self::e(self::minutes_text($g['minutes'])) . '</small>';
-        if ($compact) {
-            echo '<a class="sn-linkbtn" href="' . esc_url(self::url('integra-sentinel-bottlenecks') . '#sn-g-' . $g['key']) . '">Gestisci</a>';
-        }
+    /** Una riga: sito, componente, problema, cosa fare e le azioni possibili. */
+    private static function item_row($b, $compact, $manage) {
+        $mark = $b['mark'] ?? null;
+        $waiting = $mark && $mark['type'] === 'waiting' && !empty($mark['live']);
+        $name = (string) $b['subjectName'];
+        $text = function_exists('mb_strtolower') ? mb_strtolower($b['site_label'] . ' ' . $name . ' ' . $b['title']) : strtolower($b['site_label'] . ' ' . $name . ' ' . $b['title']);
+        echo '<article class="sn-group sn-sev-' . esc_attr($waiting ? 'low' : $b['severity']) . ($waiting ? ' is-waiting' : '') . '" id="sn-i-' . esc_attr($b['key']) . '" data-sn-text="' . esc_attr($text) . '">';
+        echo '<div class="sn-group-main"><div class="sn-group-title"><a class="sn-item-site" href="' . esc_url(self::site_anchor_url($b['site_id'], $b)) . '">' . self::e($b['site_label']) . '</a><span class="sn-item-sep" aria-hidden="true">›</span><strong>' . self::e($name) . '</strong>';
+        if (!empty($b['security'])) { echo self::badge('Sicurezza', 'danger'); }
+        echo $waiting ? self::badge('In attesa di aggiornamento', 'muted') : self::badge(Integra_Sentinel_Fleet::severity_label($b['severity']), Integra_Sentinel_Fleet::severity_tone($b['severity']));
+        if ($compact) { echo self::badge(Integra_Sentinel_Fleet::kind_label($b['kind']), 'muted'); }
         echo '</div>';
-        if (!$compact && Integra_Sentinel_Settings::can_manage()) { self::group_actions($g); }
+        if ($b['title'] !== $name) { echo '<p class="sn-group-sub">' . self::e($b['title']) . '</p>'; }
+        echo '<p>' . self::e($b['detail']) . '</p><p class="sn-group-action"><b>Cosa fare:</b> ' . self::e($b['action']) . '</p>';
+        if ($mark) {
+            $when = wp_date('d/m/Y', (int) ($mark['at'] ?? 0));
+            $note = array(
+                'verified' => 'Segnato come aggiornato all’ultima versione il ' . $when . ': è ora di ricontrollare.',
+                'tested' => 'Provato il ' . $when . ' con versioni diverse da quelle di adesso: da riprovare.',
+                'waiting' => 'In attesa dell’aggiornamento del fornitore dal ' . $when . '. Esce da solo dall’elenco quando arriva un aggiornamento che risolve.',
+            )[$mark['type']] ?? '';
+            if ($note !== '') { echo '<p class="sn-item-mark">' . self::e($note) . '</p>'; }
+        }
+        echo '</div><div class="sn-group-side"><small>~' . self::e(self::minutes_text((int) $b['minutes'])) . '</small>';
+        if ($compact) { echo '<a class="sn-linkbtn" href="' . esc_url(self::url('integra-sentinel-bottlenecks') . '#sn-i-' . $b['key']) . '">Gestisci</a>'; }
+        echo '</div>';
+        if ($manage) { self::item_actions($b, $waiting); }
         echo '</article>';
     }
 
-    /** Azioni su un gruppo: interventi per i siti scelti, eccezione approvata, scorciatoie. */
-    private static function group_actions($g) {
-        $kinds = Integra_Sentinel_Fleet::kinds();
-        echo '<details class="sn-group-actions"><summary>Gestisci</summary><div class="sn-group-forms">';
-        self::form_start('task_bulk', 'integra-sentinel-bottlenecks', array('kind' => $g['kind'], 'subject' => $g['subject'], '_sn_anchor' => 'sn-g-' . $g['key']));
-        echo '<fieldset><legend>Crea un intervento per sito</legend><input type="text" name="title" class="regular-text" maxlength="200" value="' . esc_attr($g['name'] . ' · ' . ($kinds[$g['kind']]['label'] ?? '')) . '" aria-label="Titolo dell’intervento">';
-        echo '<div class="sn-check-list">';
-        foreach ($g['sites'] as $site_id => $label) { echo '<label><input type="checkbox" name="sites[]" value="' . esc_attr($site_id) . '" checked> ' . self::e($label) . '</label>'; }
-        echo '</div><label>Assegna a ' . Integra_Sentinel_Admin_Pages::user_select('assignee', 0) . '</label> <label>Scadenza <input type="date" name="due_date"></label>';
-        submit_button('Crea interventi', 'secondary small', 'submit', false);
-        echo '</fieldset></form>';
-        self::form_start('waiver_add', 'integra-sentinel-bottlenecks', array('kind' => $g['kind'], 'subject' => $g['subject'], '_sn_anchor' => 'sn-center'));
-        foreach (array_keys($g['sites']) as $site_id) { echo '<input type="hidden" name="sites[]" value="' . esc_attr($site_id) . '">'; }
-        echo '<fieldset><legend>Approva un’eccezione</legend><input type="text" name="reason" class="regular-text" maxlength="200" required placeholder="Motivo (es. il cliente non rinnova la licenza)" aria-label="Motivo dell’eccezione">';
-        echo '<label>Fino al <input type="date" name="until" required value="' . esc_attr(wp_date('Y-m-d', strtotime('+30 days'))) . '"></label> <label><input type="checkbox" name="fleet" value="1"> per tutto il parco</label>';
-        submit_button('Approva eccezione', 'secondary small', 'submit', false);
-        echo '</fieldset></form>';
-        if ($g['kind'] === 'license') {
-            echo '<p><a class="button button-small" href="' . esc_url(self::url('integra-sentinel-licenses', array('new' => 1, 'product' => $g['name'], 'slugs' => $g['subject'])) . '#sn-license-form') . '">Registra la licenza</a></p>';
-        } elseif (in_array($g['kind'], array('manual', 'blind', 'bundled'), true)) {
-            echo '<p><a class="button button-small" href="' . esc_url(self::url('integra-sentinel-settings') . '#sn-deps-settings') . '">Aggiorna il catalogo premium</a></p>';
-        } elseif (in_array($g['kind'], array('badversion'), true)) {
-            echo '<p><a class="button button-small" href="' . esc_url(self::url('integra-sentinel-settings') . '#sn-policies') . '">Modifica le versioni da evitare</a></p>';
+    private static function item_actions($b, $waiting) {
+        $base = array('site_id' => $b['site_id'], 'kind' => $b['kind'], 'subject' => $b['subject'], 'sig' => $b['sig'], 'name' => $b['subjectName'], '_sn_anchor' => 'sn-kind-' . $b['kind']);
+        echo '<div class="sn-item-actions">';
+        if (in_array($b['kind'], self::recheck_kinds(), true)) {
+            $days = (int) (Integra_Sentinel_Settings::get('policies')['recheck_days'] ?? 60);
+            self::form_start('mark_verified', 'integra-sentinel-bottlenecks', $base, 'sn-inline-form');
+            echo '<button type="submit" class="button button-small button-primary">Aggiornato all’ultima versione</button> <label>ricontrolla tra <select name="days">';
+            foreach (array(30, 60, 90, 180) as $d) { echo '<option value="' . $d . '"' . selected($days, $d, false) . '>' . $d . ' giorni</option>'; }
+            echo '</select></label></form>';
         }
-        echo '</div></details>';
+        if ($b['kind'] === 'unknown') {
+            self::form_start('mark_tested', 'integra-sentinel-bottlenecks', $base, 'sn-inline-form');
+            echo '<button type="submit" class="button button-small button-primary">Provato: funziona</button></form>';
+            if ($waiting) {
+                self::form_start('waiver_remove', 'integra-sentinel-bottlenecks', array('id' => $b['mark']['id'], '_sn_anchor' => 'sn-i-' . $b['key']), 'sn-inline-form');
+                echo '<button type="submit" class="button button-small">Togli l’attesa</button></form>';
+            } else {
+                self::form_start('mark_waiting', 'integra-sentinel-bottlenecks', $base, 'sn-inline-form');
+                echo '<button type="submit" class="button button-small">In attesa di aggiornamento</button></form>';
+            }
+        }
+        echo '<details class="sn-item-waiver"><summary>Eccezione…</summary>';
+        self::form_start('waiver_add', 'integra-sentinel-bottlenecks', $base);
+        echo '<input type="text" name="reason" maxlength="200" placeholder="Motivo (facoltativo)" aria-label="Motivo dell’eccezione"> <label>fino al <input type="date" name="until" required value="' . esc_attr(wp_date('Y-m-d', strtotime('+90 days'))) . '"></label> <label><input type="checkbox" name="fleet" value="1"> su tutti i siti</label> ';
+        echo '<button type="submit" class="button button-small">Togli dall’elenco</button></form></details>';
+        echo '</div>';
     }
 
     /** Andamenti degli ultimi 30 giorni: riquadri con valore, variazione e sparkline (con tabella dei dati). */
@@ -378,106 +341,131 @@ final class Integra_Sentinel_Admin {
 
     private static function page_bottlenecks() {
         $fleet = Integra_Sentinel_Fleet::aggregate();
-        self::open('integra-sentinel-bottlenecks', self::badge($fleet['groups'] . ' elementi', 'brand'));
-        echo '<section class="sn-page-heading"><div><p class="sn-kicker">COLLI DI BOTTIGLIA</p><h2>Cosa impedisce di aggiornare</h2><p>Licenze, premium manuali, addon, server, versioni e punti ciechi di tutto il parco. Filtra per chi deve agire e crea interventi o eccezioni.</p></div></section>';
+        self::open('integra-sentinel-bottlenecks', self::badge($fleet['total'] . ' elementi · ' . $fleet['sites'] . ' siti', 'brand'));
+        echo '<section class="sn-page-heading"><div><p class="sn-kicker">COLLI DI BOTTIGLIA</p><h2>Cosa impedisce di aggiornare</h2><p>Licenze, premium da aggiornare a mano, addon, server, versioni e punti ciechi di tutto il parco. Per ogni riga puoi segnare cosa hai fatto o togliere il problema dall’elenco con un’eccezione.</p></div></section>';
         self::readiness($fleet);
-        self::bottleneck_center($fleet, false);
+        self::bottleneck_center($fleet);
         $waivers = Integra_Sentinel_Settings::waivers();
+        $types = Integra_Sentinel_Settings::mark_types();
         $sites = Integra_Sentinel_Master::sites();
-        echo '<section class="sn-panel" id="sn-waivers"><div class="sn-section-head"><div><h3>Eccezioni approvate</h3><p>Elementi accettati consapevolmente: non contano nei totali e non generano allarmi fino alla scadenza.</p></div><span class="sn-counter">' . count($waivers) . '</span></div>';
-        if (!$waivers) { echo '<p class="sn-muted">Nessuna eccezione.</p>'; }
+        echo '<section class="sn-panel" id="sn-waivers"><div class="sn-section-head"><div><h3>Eccezioni e verifiche</h3><p>Cosa hai segnato: le eccezioni valgono fino alla data scelta, gli aggiornamenti a mano tornano da ricontrollare, le prove valgono finché non cambiano le versioni.</p></div><span class="sn-counter">' . count($waivers) . '</span></div>';
+        if (!$waivers) { echo '<p class="sn-muted">Niente di segnato.</p>'; }
         else {
             $today = wp_date('Y-m-d');
-            echo '<table class="sn-simple-table"><thead><tr><th>Dove</th><th>Causa</th><th>Elemento</th><th>Motivo</th><th>Fino al</th><th>Da</th><th></th></tr></thead><tbody>';
+            uasort($waivers, function($a, $b) { return ((int) ($b['at'] ?? 0)) <=> ((int) ($a['at'] ?? 0)); });
+            echo '<div class="sn-table-wrap"><table class="sn-simple-table"><thead><tr><th>Sito</th><th>Componente</th><th>Causa</th><th>Segnato come</th><th>Validità</th><th>Da</th><th></th></tr></thead><tbody>';
             foreach ($waivers as $w) {
-                $where = ($w['site_id'] ?? '') === '*' ? 'Tutto il parco' : (string) ($sites[$w['site_id']]['label'] ?? 'Sito rimosso');
-                echo '<tr><td>' . self::e($where) . '</td><td>' . self::e(Integra_Sentinel_Fleet::kind_label($w['kind'])) . '</td><td><code>' . self::e($w['subject']) . '</code></td><td>' . self::e($w['reason']) . '</td><td>'
-                    . (($w['until'] ?? '') < $today ? self::badge('Scaduta', 'warn') : self::e(wp_date('d/m/Y', strtotime($w['until'] . ' 12:00:00')))) . '</td><td>' . self::e($w['by'] ?? '') . '</td><td>';
+                $type = (string) ($w['type'] ?? 'waiver');
+                $where = ($w['site_id'] ?? '') === '*' ? 'Tutti i siti' : (string) ($sites[$w['site_id']]['label'] ?? 'Sito rimosso');
+                $until = (string) ($w['until'] ?? '');
+                $validity = in_array($type, array('tested', 'waiting'), true) ? 'Finché non cambiano le versioni'
+                    : ($until < $today ? self::badge($type === 'verified' ? 'Da ricontrollare' : 'Scaduta', 'warn') : ($type === 'verified' ? 'Ricontrollo il ' : 'Fino al ') . wp_date('d/m/Y', strtotime($until . ' 12:00:00')));
+                echo '<tr><td>' . self::e($where) . '</td><td>' . self::e(($w['name'] ?? '') !== '' ? $w['name'] : $w['subject']) . '</td><td>' . self::e(Integra_Sentinel_Fleet::kind_label($w['kind'])) . '</td><td>'
+                    . self::e($types[$type] ?? $type) . (($w['reason'] ?? '') !== '' && $type === 'waiver' ? '<br><small>' . self::e($w['reason']) . '</small>' : '') . '</td><td>'
+                    . (strpos($validity, '<span') === 0 ? $validity : self::e($validity)) . '</td><td>' . self::e(($w['by'] ?? '') . (!empty($w['at']) ? ' · ' . wp_date('d/m/Y', (int) $w['at']) : '')) . '</td><td>';
                 if (Integra_Sentinel_Settings::can_manage()) {
                     self::form_start('waiver_remove', 'integra-sentinel-bottlenecks', array('id' => $w['id'], '_sn_anchor' => 'sn-waivers'));
                     echo '<button class="button button-small" type="submit">Rimuovi</button></form>';
                 }
                 echo '</td></tr>';
             }
-            echo '</tbody></table>';
+            echo '</tbody></table></div>';
         }
         echo '</section>';
         self::close();
     }
 
-    /* ---------- Pagina: plugin e temi del parco (con modalita' emergenza) ---------- */
+    /* ---------- Pagina: plugin e temi del parco ---------- */
 
     private static function page_fleet() {
         $fleet = Integra_Sentinel_Fleet::aggregate();
         $products = Integra_Sentinel_Fleet::products($fleet);
         $key = isset($_GET['product']) ? sanitize_text_field(wp_unslash($_GET['product'])) : '';
         if ($key !== '' && isset($products[$key])) {
-            self::open('integra-sentinel-fleet', '<a class="button" href="' . esc_url(self::url('integra-sentinel-fleet')) . '">← Tutti i prodotti</a>');
+            self::open('integra-sentinel-fleet', '<a class="button" href="' . esc_url(self::url('integra-sentinel-fleet')) . '">← Tutti i plugin e temi</a>');
             self::product_detail($products[$key]);
             self::close();
             return;
         }
-        self::open('integra-sentinel-fleet', self::badge(count($products) . ' prodotti', 'brand'));
-        echo '<section class="sn-page-heading"><div><p class="sn-kicker">PLUGIN E TEMI DEL PARCO</p><h2>Dove si trova ogni prodotto</h2><p>Per ogni plugin e tema: su quanti siti è installato, con quali versioni e cosa blocca l’allineamento. Aprilo per la vista per sito e l’ordine di aggiornamento a ondate.</p></div></section>';
-        echo '<section class="sn-section"><div class="sn-plugin-tools"><label class="sn-search"><span aria-hidden="true">⌕</span><input type="search" data-sn-table-search="sn-products" placeholder="Cerca un plugin o un tema…" aria-label="Cerca prodotti"></label></div>';
-        echo '<div class="sn-table-wrap"><table class="sn-simple-table sn-products" id="sn-products"><thead><tr><th>Prodotto</th><th>Siti</th><th>Versioni</th><th>Ultima nota</th><th>Da allineare</th><th>Problemi</th></tr></thead><tbody>';
-        foreach ($products as $pkey => $p) {
-            $versions = array(); $behind = 0; $issues = array('license' => 0, 'blocked' => 0, 'vuln' => 0, 'blind' => 0);
-            foreach ($p['sites'] as $s) {
-                if ($s['ver'] !== '') { $versions[$s['ver']] = true; }
-                if ($p['latest'] !== '' && Integra_Sentinel_Dependencies::valid_version((string) $s['ver']) && version_compare(ltrim($s['ver'], 'v'), ltrim($p['latest'], 'v'), '<')) { ++$behind; }
-                if ($s['status'] === 'license') { ++$issues['license']; }
-                if (in_array($s['status'], array('blocked', 'held', 'bottleneck'), true)) { ++$issues['blocked']; }
-                if (!empty($s['vuln']['count'])) { ++$issues['vuln']; }
-                if ($s['status'] === 'blind') { ++$issues['blind']; }
-            }
-            uksort($versions, function($a, $b) { return version_compare(ltrim($a, 'v'), ltrim($b, 'v')); });
-            $vlist = array_keys($versions);
-            $range = $vlist ? (count($vlist) > 1 ? reset($vlist) . ' – ' . end($vlist) : reset($vlist)) : '—';
-            echo '<tr data-sn-name="' . esc_attr(strtolower($p['name'] . ' ' . $p['slug'])) . '"><td><a href="' . esc_url(self::url('integra-sentinel-fleet', array('product' => $pkey))) . '"><strong>' . self::e($p['name']) . '</strong></a> '
-                . self::badge($p['type'] === 'theme' ? 'Tema' : 'Plugin', 'muted') . ($p['premium'] ? ' ' . self::badge('Premium', 'premium') : '') . '<br><small><code>' . self::e($p['slug']) . '</code></small></td>';
-            echo '<td>' . count($p['sites']) . '</td><td>' . self::e($range) . (count($vlist) > 1 ? ' <small>(' . count($vlist) . ' versioni)</small>' : '') . '</td><td>' . self::e($p['latest'] ?: '—') . '</td><td>' . ($behind ? '<strong>' . $behind . '</strong>' : '0') . '</td><td>';
-            if ($issues['vuln']) { echo self::badge($issues['vuln'] . ' vulnerabili', 'danger') . ' '; }
-            if ($issues['blocked']) { echo self::badge($issues['blocked'] . ' bloccati', 'high') . ' '; }
-            if ($issues['license']) { echo self::badge($issues['license'] . ' licenza', 'premium') . ' '; }
-            if ($issues['blind']) { echo self::badge($issues['blind'] . ' versione ignota', 'muted'); }
-            echo '</td></tr>';
+        $by_type = array('plugin' => array(), 'theme' => array());
+        foreach ($products as $pkey => $p) { $by_type[$p['type']][$pkey] = $p; }
+        $sites = array();
+        foreach (Integra_Sentinel_Master::sites() as $id => $site) { if (isset($fleet['per_site'][$id])) { $sites[$id] = (string) $site['label']; } }
+        uasort($sites, 'strcasecmp');
+        self::open('integra-sentinel-fleet', self::badge(count($by_type['plugin']) . ' plugin · ' . count($by_type['theme']) . ' temi', 'brand'));
+        echo '<section class="sn-page-heading"><div><p class="sn-kicker">PLUGIN E TEMI DEL PARCO</p><h2>Dove si trova ogni plugin e ogni tema</h2><p>Su quali siti è installato, con quali versioni e cosa blocca l’allineamento. Accendi o spegni i siti per vedere solo quelli che ti interessano; apri un prodotto per il dettaglio sito per sito.</p></div></section>';
+        echo '<section class="sn-section sn-fleet" data-sn-fleet>';
+        echo '<div class="sn-fleet-sites"><div class="sn-fleet-sites-head"><strong>Siti</strong> <span class="sn-hint" data-sn-fleet-count>' . count($sites) . ' di ' . count($sites) . ' attivi</span> <button type="button" class="sn-linkbtn" data-sn-fleet-all="1">Tutti</button> · <button type="button" class="sn-linkbtn" data-sn-fleet-all="0">Nessuno</button></div><div class="sn-chips" role="group" aria-label="Siti da includere">';
+        foreach ($sites as $id => $label) {
+            echo '<button type="button" class="sn-chip is-selected" data-sn-fleet-site="' . esc_attr($id) . '" aria-pressed="true">' . self::e($label) . '</button>';
         }
-        echo '</tbody></table></div><p class="sn-no-results" data-sn-table-empty="sn-products" hidden>Nessun prodotto corrisponde alla ricerca.</p></section>';
+        echo '</div></div>';
+        echo '<div class="sn-fleet-bar"><div class="sn-tabs" role="tablist" aria-label="Plugin o temi">';
+        foreach (array('plugin' => 'Plugin', 'theme' => 'Temi') as $type => $label) {
+            $on = $type === 'plugin';
+            echo '<button type="button" class="sn-tab' . ($on ? ' is-selected' : '') . '" role="tab" id="sn-ftab-' . $type . '" aria-controls="sn-fpanel-' . $type . '" aria-selected="' . ($on ? 'true' : 'false') . '" data-sn-ftab="' . $type . '">' . self::e($label) . ' <span data-sn-ftab-count="' . $type . '">' . count($by_type[$type]) . '</span></button>';
+        }
+        echo '</div><label class="sn-search"><span aria-hidden="true">⌕</span><input type="search" data-sn-fleet-search placeholder="Cerca un plugin o un tema…" aria-label="Cerca plugin e temi"></label></div>';
+        foreach ($by_type as $type => $list) {
+            echo '<div class="sn-table-wrap" id="sn-fpanel-' . $type . '" role="tabpanel" aria-labelledby="sn-ftab-' . $type . '"' . ($type === 'plugin' ? '' : ' hidden') . '><table class="sn-simple-table sn-products"><thead><tr><th>' . ($type === 'plugin' ? 'Plugin' : 'Tema') . '</th><th>Siti</th><th>Versioni installate</th><th>Ultima nota</th><th>Da aggiornare</th><th>Problemi</th></tr></thead><tbody>';
+            foreach ($list as $pkey => $p) { self::fleet_row($pkey, $p); }
+            echo '</tbody></table><p class="sn-no-results" data-sn-fleet-empty hidden>Nessun ' . ($type === 'plugin' ? 'plugin' : 'tema') . ' sui siti scelti corrisponde alla ricerca.</p></div>';
+        }
+        echo '</section>';
         self::close();
     }
 
+    /** Riga di un prodotto: le colonne sono ricalcolate dal JS quando si spengono dei siti, a partire dai dati per sito. */
+    private static function fleet_row($pkey, $p) {
+        $data = array(); $versions = array(); $behind = 0; $issues = array('vuln' => 0, 'blocked' => 0, 'license' => 0, 'blind' => 0);
+        foreach ($p['sites'] as $id => $s) {
+            $is_behind = $p['latest'] !== '' && Integra_Sentinel_Dependencies::valid_version((string) $s['ver']) && version_compare(ltrim($s['ver'], 'v'), ltrim($p['latest'], 'v'), '<');
+            $row = array('l' => $s['label'], 'v' => (string) $s['ver'], 'b' => $is_behind ? 1 : 0, 'x' => !empty($s['vuln']['count']) ? 1 : 0,
+                'k' => in_array($s['status'], array('blocked', 'held', 'bottleneck'), true) ? 1 : 0, 'c' => $s['status'] === 'license' ? 1 : 0, 'u' => $s['status'] === 'blind' ? 1 : 0);
+            $data[$id] = $row;
+            if ($s['ver'] !== '') { $versions[$s['ver']] = true; }
+            $behind += $row['b']; $issues['vuln'] += $row['x']; $issues['blocked'] += $row['k']; $issues['license'] += $row['c']; $issues['blind'] += $row['u'];
+        }
+        uksort($versions, function($a, $b) { return version_compare(ltrim($a, 'v'), ltrim($b, 'v')); });
+        $vlist = array_keys($versions);
+        $names = array_column($p['sites'], 'label');
+        sort($names, SORT_STRING | SORT_FLAG_CASE);
+        echo '<tr data-sn-name="' . esc_attr(strtolower($p['name'] . ' ' . $p['slug'])) . '" data-sn-sites="' . esc_attr(wp_json_encode($data)) . '"><td><a href="' . esc_url(self::url('integra-sentinel-fleet', array('product' => $pkey))) . '"><strong>' . self::e($p['name']) . '</strong></a> '
+            . ($p['envato'] ? self::badge('Envato', 'premium') : ($p['external'] ? self::badge('Fuori repository', 'premium') : '')) . '<br><small><code>' . self::e($p['slug']) . '</code></small></td>';
+        echo '<td><strong data-sn-col="n">' . count($p['sites']) . '</strong><br><small data-sn-col="names">' . self::e(implode(', ', array_slice($names, 0, 4)) . (count($names) > 4 ? ' +' . (count($names) - 4) : '')) . '</small></td>';
+        echo '<td data-sn-col="range">' . self::e($vlist ? (count($vlist) > 1 ? reset($vlist) . ' – ' . end($vlist) . ' (' . count($vlist) . ' versioni)' : reset($vlist)) : '—') . '</td><td>' . self::e($p['latest'] ?: '—') . '</td>';
+        echo '<td data-sn-col="behind">' . ($behind ? '<strong>' . $behind . '</strong>' : '0') . '</td><td data-sn-col="issues">';
+        if ($issues['vuln']) { echo self::badge($issues['vuln'] . ' vulnerabili', 'danger') . ' '; }
+        if ($issues['blocked']) { echo self::badge($issues['blocked'] . ' bloccati', 'high') . ' '; }
+        if ($issues['license']) { echo self::badge($issues['license'] . ' licenza', 'premium') . ' '; }
+        if ($issues['blind']) { echo self::badge($issues['blind'] . ' versione ignota', 'muted'); }
+        echo '</td></tr>';
+    }
+
     private static function product_detail($p) {
-        $rollout = Integra_Sentinel_Fleet::rollout($p);
-        $rings = Integra_Sentinel_Fleet::ring_labels();
-        $vulnerable = 0; $ready_now = 0;
-        foreach ($p['sites'] as $s) { if (!empty($s['vuln']['count'])) { ++$vulnerable; } if ($s['status'] === 'update') { ++$ready_now; } }
+        $vulnerable = 0; $ready_now = 0; $behind = 0;
+        foreach ($p['sites'] as $s) {
+            if (!empty($s['vuln']['count'])) { ++$vulnerable; }
+            if ($s['status'] === 'update') { ++$ready_now; }
+            if ($p['latest'] !== '' && Integra_Sentinel_Dependencies::valid_version((string) $s['ver']) && version_compare(ltrim($s['ver'], 'v'), ltrim($p['latest'], 'v'), '<')) { ++$behind; }
+        }
         echo '<section class="sn-page-heading"><div><p class="sn-kicker">' . ($p['type'] === 'theme' ? 'TEMA' : 'PLUGIN') . ' · ' . count($p['sites']) . ' SITI</p><h2>' . self::e($p['name']) . '</h2><p>Ultima versione nota: <strong>' . self::e($p['latest'] ?: 'sconosciuta') . '</strong> · <code>' . self::e($p['slug']) . '</code></p></div></section>';
         if ($vulnerable) {
-            echo '<div class="sn-integrity-alert"><h3>Modalità emergenza: ' . (int) $vulnerable . ' siti con vulnerabilità note su questo prodotto</h3><p class="sn-hint" style="color:#731c28">Aggiorna per primi i siti segnati “Aggiornabile”; per gli altri la colonna Stato spiega cosa blocca (licenza, addon, PHP).</p></div>';
+            echo '<div class="sn-integrity-alert"><h3>' . (int) $vulnerable . ' siti con vulnerabilità note su questo prodotto</h3><p class="sn-hint" style="color:#731c28">Aggiorna per primi i siti segnati “Aggiornabile”; per gli altri la colonna Stato spiega cosa blocca (licenza, addon, PHP).</p></div>';
         }
         echo '<div class="sn-stats">';
-        Integra_Sentinel_Master::sn_stat(count($p['sites']), 'Siti con il prodotto', $p['premium'] ? 'Prodotto premium' : 'Prodotto WordPress.org', 'brand');
+        Integra_Sentinel_Master::sn_stat(count($p['sites']), 'Siti con il prodotto', $p['external'] ? 'Fuori repository' : 'Libreria WordPress.org', 'brand');
+        Integra_Sentinel_Master::sn_stat($behind, 'Da aggiornare', 'rispetto all’ultima versione nota', $behind ? 'warn' : 'clear');
         Integra_Sentinel_Master::sn_stat($ready_now, 'Aggiornabili subito', 'nessun blocco noto', 'ok');
         Integra_Sentinel_Master::sn_stat($vulnerable, 'Con vulnerabilità note', 'sulla versione installata', $vulnerable ? 'danger' : 'clear');
-        Integra_Sentinel_Master::sn_stat($rollout['current'] === null ? 'Allineato' : 'Ondata ' . (int) $rollout['current'], 'Da aggiornare adesso', 'ordine consigliato per ondate', 'warn');
         echo '</div>';
-        if ($rollout['rings']) {
-            echo '<section class="sn-panel sn-rollout"><div class="sn-section-head"><div><h3>Aggiornamento a ondate</h3><p>Prima i siti di prova, per ultimi gli e-commerce: se un’ondata dà problemi ci si ferma lì. L’ondata di ogni sito si imposta nella sua scheda cliente.</p></div></div><ol class="sn-rings">';
-            foreach ($rollout['rings'] as $ring => $r) {
-                $state = $r['done'] >= $r['total'] ? 'done' : ($ring === $rollout['current'] ? 'now' : 'wait');
-                $label = array('done' => 'Completata', 'now' => 'Da aggiornare ora', 'wait' => 'In attesa')[$state];
-                echo '<li class="sn-ring sn-ring-' . $state . '"><strong>' . self::e($rings[$ring] ?? ('Ondata ' . $ring)) . '</strong><span>' . (int) $r['done'] . '/' . (int) $r['total'] . ' siti allineati</span>' . self::badge($label, $state === 'done' ? 'ok' : ($state === 'now' ? 'brand' : 'muted')) . '</li>';
-            }
-            echo '</ol></section>';
-        }
         $site_rows = $p['sites'];
-        uasort($site_rows, function($a, $b) { return ($a['ring'] <=> $b['ring']) ?: strcasecmp($a['label'], $b['label']); });
-        echo '<section class="sn-section"><div class="sn-table-wrap"><table class="sn-simple-table"><thead><tr><th>Sito</th><th>Ondata</th><th>Versione</th><th>Stato</th><th>Dettaglio</th></tr></thead><tbody>';
+        uasort($site_rows, function($a, $b) { return strcasecmp($a['label'], $b['label']); });
+        echo '<section class="sn-section"><div class="sn-table-wrap"><table class="sn-simple-table"><thead><tr><th>Sito</th><th>Versione</th><th>Stato</th><th>Dettaglio</th></tr></thead><tbody>';
         foreach ($site_rows as $site_id => $s) {
             $target = $s['new'] !== '' ? $s['new'] : $s['latest'];
             echo '<tr><td><a href="' . esc_url(Integra_Sentinel_Master::sn_admin_url($site_id) . '#sn-plugin-' . sanitize_html_class($p['slug'])) . '"><strong>' . self::e($s['label']) . '</strong></a>' . (!$s['active'] ? ' <em>inattivo</em>' : '') . '</td>';
-            echo '<td>' . (int) $s['ring'] . '</td><td>' . self::e($s['ver'] ?: '—') . ($target !== '' && $target !== $s['ver'] ? ' → <strong>' . self::e($target) . '</strong>' : '') . '</td>';
+            echo '<td>' . self::e($s['ver'] ?: '—') . ($target !== '' && $target !== $s['ver'] ? ' → <strong>' . self::e($target) . '</strong>' : '') . '</td>';
             echo '<td>' . Integra_Sentinel_Master::sn_badge($s['statusLabel'], Integra_Sentinel_Master::sn_status_tone($s['status']));
             if (!empty($s['vuln']['count'])) { echo ' ' . self::badge((int) $s['vuln']['count'] . ' CVE', $s['vuln']['tier'] ?: 'danger'); }
             if ($s['auto']) { echo ' ' . self::badge('Aggiornamento automatico', 'muted'); }
@@ -514,58 +502,32 @@ final class Integra_Sentinel_Admin {
         $site_id = sanitize_text_field(self::post('site_id'));
         switch ($cmd) {
             case 'waiver_add':
-                $reason = sanitize_text_field(self::post('reason'));
-                $until = (string) self::post('until');
-                if ($reason === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $until)) { self::back('invalid'); }
+            case 'mark_verified':
+            case 'mark_tested':
+            case 'mark_waiting':
                 $kind = sanitize_key(self::post('kind'));
                 $subject = sanitize_text_field(self::post('subject'));
-                if (self::post('fleet')) {
-                    Integra_Sentinel_Settings::waiver_add('*', $kind, $subject, $reason, $until, true);
+                $fleet_wide = $cmd === 'waiver_add' && self::post('fleet');
+                if (!$fleet_wide && !isset($sites[$site_id])) { self::back('invalid'); }
+                $types = array('waiver_add' => 'waiver', 'mark_verified' => 'verified', 'mark_tested' => 'tested', 'mark_waiting' => 'waiting');
+                if ($cmd === 'waiver_add') {
+                    $until = (string) self::post('until');
+                    $reason = sanitize_text_field(self::post('reason'));
+                } elseif ($cmd === 'mark_verified') {
+                    $days = in_array((int) self::post('days'), array(30, 60, 90, 180), true) ? (int) self::post('days') : 60;
+                    $until = wp_date('Y-m-d', strtotime('+' . $days . ' days', current_time('timestamp')));
+                    $reason = 'Aggiornato all’ultima versione';
                 } else {
-                    foreach ((array) self::post('sites', array()) as $sid) {
-                        $sid = sanitize_text_field($sid);
-                        if (isset($sites[$sid])) { Integra_Sentinel_Settings::waiver_add($sid, $kind, $subject, $reason, $until, false); }
-                    }
+                    $until = '9999-12-31';
+                    $reason = $cmd === 'mark_tested' ? 'Provato: funziona' : 'In attesa di aggiornamento';
                 }
-                Integra_Sentinel_Store::log('waiver_add', $kind . ' · ' . $subject . ' · ' . $reason);
-                self::back('waiver');
+                $ok = Integra_Sentinel_Settings::waiver_add($site_id, $kind, $subject, $reason, $until, $fleet_wide, $types[$cmd], (string) self::post('sig'), (string) self::post('name'));
+                if ($ok) { Integra_Sentinel_Store::log($types[$cmd], $kind . ' · ' . $subject . ($reason !== '' ? ' · ' . $reason : ''), $fleet_wide ? '' : $site_id); }
+                self::back($ok ? $types[$cmd] : 'invalid');
             case 'waiver_remove':
                 Integra_Sentinel_Settings::waiver_remove(sanitize_key(self::post('id')));
                 Integra_Sentinel_Store::log('waiver_remove', sanitize_key(self::post('id')));
                 self::back('waiver_removed');
-            case 'task_bulk':
-                $made = 0;
-                foreach ((array) self::post('sites', array()) as $sid) {
-                    $sid = sanitize_text_field($sid);
-                    if (!isset($sites[$sid])) { continue; }
-                    $made += Integra_Sentinel_Store::task_save(array('site_id' => $sid, 'title' => self::post('title'), 'kind' => self::post('kind'), 'subject' => self::post('subject'),
-                        'assignee' => self::post('assignee'), 'due_date' => self::post('due_date'), 'status' => 'open', 'notes' => '')) ? 1 : 0;
-                }
-                Integra_Sentinel_Store::log('task_bulk', $made . ' interventi · ' . sanitize_text_field(self::post('title')));
-                self::back($made ? 'tasks' : 'invalid');
-            case 'task_save':
-                $id = Integra_Sentinel_Store::task_save(array('id' => self::post('id'), 'site_id' => isset($sites[$site_id]) ? $site_id : '', 'title' => self::post('title'),
-                    'kind' => self::post('kind'), 'subject' => self::post('subject'), 'status' => self::post('status'), 'assignee' => self::post('assignee'),
-                    'due_date' => self::post('due_date'), 'minutes' => self::post('minutes'), 'notes' => self::post('notes')));
-                if ($id) { Integra_Sentinel_Store::log('task_save', '#' . $id . ' ' . sanitize_text_field(self::post('title')), $site_id); }
-                self::back($id ? 'task' : 'invalid');
-            case 'task_status':
-                $ok = Integra_Sentinel_Store::task_set_status(absint(self::post('id')), sanitize_key(self::post('status')));
-                self::back($ok ? 'task' : 'invalid');
-            case 'task_delete':
-                $ok = Integra_Sentinel_Store::task_delete(absint(self::post('id')));
-                if ($ok) { Integra_Sentinel_Store::log('task_delete', '#' . absint(self::post('id'))); }
-                self::back($ok ? 'task_deleted' : 'invalid');
-            case 'license_save':
-                $id = Integra_Sentinel_Licenses::save(array('id' => self::post('id'), 'product' => self::post('product'), 'slugs' => self::post('slugs'), 'type' => self::post('type'),
-                    'seats' => self::post('seats'), 'expires' => self::post('expires'), 'cost' => self::post('cost'), 'payer' => self::post('payer'),
-                    'sites' => (array) self::post('sites', array()), 'vendor_url' => self::post('vendor_url'), 'notes' => self::post('notes')));
-                if ($id) { Integra_Sentinel_Store::log('license_save', sanitize_text_field(self::post('product'))); }
-                self::back($id ? 'license' : 'invalid');
-            case 'license_delete':
-                $ok = Integra_Sentinel_Licenses::delete(sanitize_key(self::post('id')));
-                if ($ok) { Integra_Sentinel_Store::log('license_delete', sanitize_key(self::post('id'))); }
-                self::back($ok ? 'license_deleted' : 'invalid');
             case 'envato_token':
                 $token = trim((string) self::post('envato_token'));
                 if (self::post('remove')) {
@@ -591,11 +553,11 @@ final class Integra_Sentinel_Admin {
                 $p['quarantine_days'] = max(0, min(30, absint(self::post('quarantine_days'))));
                 $p['quarantine_scope'] = in_array(self::post('quarantine_scope'), array('hubs', 'all', 'off'), true) ? self::post('quarantine_scope') : 'hubs';
                 $p['abandoned_years'] = max(1, min(6, absint(self::post('abandoned_years', 2))));
+                $p['recheck_days'] = max(7, min(365, absint(self::post('recheck_days', 60))));
                 $p['disk_min_mb'] = max(100, min(100000, absint(self::post('disk_min_mb', 500))));
                 $p['backup_max_days'] = max(1, min(90, absint(self::post('backup_max_days', 7))));
                 $p['probe_minutes'] = max(5, min(240, absint(self::post('probe_minutes', 15))));
                 $p['rotation_grace_days'] = max(0, min(30, absint(self::post('rotation_grace_days', 7))));
-                $p['license_reminders'] = self::post('license_reminders') ? 1 : 0;
                 Integra_Sentinel_Settings::save('policies', $p);
                 Integra_Sentinel_Settings::save('bad_versions', Integra_Sentinel_Settings::parse_bad_versions(self::post('bad_versions')));
                 Integra_Sentinel_Settings::save('freezes', Integra_Sentinel_Settings::parse_freezes(self::post('freezes')));
@@ -757,20 +719,17 @@ final class Integra_Sentinel_Admin {
         check_admin_referer('integra_sentinel_csv');
         $fleet = Integra_Sentinel_Fleet::aggregate();
         $sites = Integra_Sentinel_Master::sites();
-        $owners = Integra_Sentinel_Fleet::owners();
         nocache_headers();
         header('Content-Type: text/csv; charset=UTF-8');
         header('Content-Disposition: attachment; filename="sentinel-colli-di-bottiglia-' . wp_date('Y-m-d') . '.csv"');
         $out = fopen('php://output', 'w');
         fwrite($out, "\xEF\xBB\xBF");
-        fputcsv($out, array('Causa', 'Elemento', 'Gravità', 'Chi agisce', 'Sito', 'URL', 'Problema', 'Dettaglio', 'Azione', 'Minuti stimati', 'Sicurezza'), ';');
-        foreach ($fleet['kinds'] as $kind => $groups) {
-            foreach ($groups as $g) {
-                foreach ($g['items'] as $site_id => $b) {
-                    fputcsv($out, array(self::csv_cell(Integra_Sentinel_Fleet::kind_label($kind)), self::csv_cell($g['name']), Integra_Sentinel_Fleet::severity_label($b['severity']), $owners[$b['owner']] ?? 'Agenzia',
-                        self::csv_cell($sites[$site_id]['label'] ?? $site_id), $sites[$site_id]['url'] ?? '', self::csv_cell($b['title']), self::csv_cell($b['detail']),
-                        self::csv_cell($b['action']), (int) $b['minutes'], !empty($b['security']) ? 'sì' : 'no'), ';');
-                }
+        fputcsv($out, array('Sito', 'URL', 'Causa', 'Componente', 'Gravità', 'Problema', 'Dettaglio', 'Cosa fare', 'Minuti stimati', 'Sicurezza', 'Segnato'), ';');
+        foreach ($fleet['kinds'] as $kind => $rows) {
+            foreach ($rows as $b) {
+                fputcsv($out, array(self::csv_cell($b['site_label']), $sites[$b['site_id']]['url'] ?? '', self::csv_cell(Integra_Sentinel_Fleet::kind_label($kind)), self::csv_cell($b['subjectName']),
+                    Integra_Sentinel_Fleet::severity_label($b['severity']), self::csv_cell($b['title']), self::csv_cell($b['detail']), self::csv_cell($b['action']), (int) $b['minutes'],
+                    !empty($b['security']) ? 'sì' : 'no', self::csv_cell(Integra_Sentinel_Settings::mark_types()[$b['mark']['type'] ?? ''] ?? '')), ';');
             }
         }
         fclose($out);

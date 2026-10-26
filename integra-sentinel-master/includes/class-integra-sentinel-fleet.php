@@ -1,7 +1,7 @@
 <?php
 /**
- * Integra Sentinel — vista d'insieme del parco: colli di bottiglia raggruppati per causa e per prodotto
- * ("ACF PRO: licenza scaduta su 6 siti" = un'azione), indicatori di aggiornabilita' e vista per plugin.
+ * Integra Sentinel — vista d'insieme del parco: colli di bottiglia per causa (una riga per sito e problema),
+ * indicatori di aggiornabilita' e vista per plugin e tema.
  */
 
 if (!defined('ABSPATH')) { exit; }
@@ -40,10 +40,6 @@ final class Integra_Sentinel_Fleet {
         return $kinds[$kind]['label'] ?? 'Da verificare';
     }
 
-    public static function owners() {
-        return array('agenzia' => 'Agenzia', 'cliente' => 'Cliente', 'hosting' => 'Hosting', 'fornitore' => 'Fornitore');
-    }
-
     public static function severity_rank($severity) {
         return array('critical' => 4, 'high' => 3, 'medium' => 2, 'low' => 1)[$severity] ?? 0;
     }
@@ -58,18 +54,19 @@ final class Integra_Sentinel_Fleet {
 
     public static function reset() { self::$memo = null; }
 
-    /** Chiave del gruppo nel parco (stessa causa, stesso prodotto; per le licenze anche stesso responsabile). */
-    public static function group_key($b) {
-        return substr(md5($b['kind'] . '|' . $b['subject'] . ($b['kind'] === 'license' ? '|' . $b['owner'] : '')), 0, 10);
+    /** Chiave di un problema su un sito: ancora stabile per i link dalla scheda sito alla pagina Colli di bottiglia. */
+    public static function item_key($site_id, $b) {
+        return substr(md5($site_id . '|' . $b['kind'] . '|' . $b['subject']), 0, 10);
     }
 
     /**
-     * @return array kinds (tipo => gruppi ordinati), groups (n), kpi, kpi_sites, waived, per_site, owners
+     * Problemi del parco, una riga per sito e per problema: prima il sito, poi il componente.
+     * @return array kinds (tipo => righe), total, sites (siti con problemi), kpi, kpi_sites, waived, per_site
      */
     public static function aggregate() {
         if (self::$memo !== null) { return self::$memo; }
         $sites = Integra_Sentinel_Master::sites();
-        $groups = array(); $waived = array(); $per_site = array();
+        $by_kind = array(); $waived = array(); $per_site = array(); $with = array();
         $keys = array('ready', 'blocked', 'license', 'manual', 'blind', 'security', 'bottlenecks', 'critical');
         $kpi = array_fill_keys($keys, 0) + array('minutes' => 0, 'analyzed' => 0);
         $kpi_sites = array_fill_keys($keys, 0);
@@ -84,55 +81,40 @@ final class Integra_Sentinel_Fleet {
                 if ($v) { ++$kpi_sites[$k]; }
             }
             $kpi['minutes'] += (int) $a['summary']['minutes'];
+            $label = (string) ($site['label'] ?? $id);
             foreach ($a['bottlenecks'] as $b) {
-                $gk = $b['kind'] . '|' . $b['subject'] . ($b['kind'] === 'license' ? '|' . $b['owner'] : '');
-                if (!isset($groups[$gk])) {
-                    $groups[$gk] = array('key' => self::group_key($b), 'kind' => $b['kind'], 'subject' => $b['subject'], 'name' => (string) $b['subjectName'],
-                        'severity' => 'low', 'owner' => (string) $b['owner'], 'security' => false, 'score' => 0, 'sites' => array(), 'items' => array(),
-                        'unlocks' => 0, 'minutes' => 0, 'title' => (string) $b['title'], 'detail' => (string) $b['detail'], 'action' => (string) $b['action']);
-                }
-                $g = &$groups[$gk];
-                if (self::severity_rank($b['severity']) > self::severity_rank($g['severity'])) { $g['severity'] = $b['severity']; }
-                $g['security'] = $g['security'] || !empty($b['security']);
-                $g['score'] = max($g['score'], (int) $b['score']);
-                $g['sites'][$id] = (string) ($site['label'] ?? $id);
-                $g['items'][$id] = $b;
-                $g['unlocks'] += count((array) $b['unlocks']);
-                $g['minutes'] += (int) $b['minutes'];
-                unset($g);
+                $by_kind[$b['kind']][] = $b + array('site_id' => $id, 'site_label' => $label, 'key' => self::item_key($id, $b));
+                $with[$id] = true;
             }
-            foreach ($a['waived'] as $b) { $waived[] = $b + array('site_id' => $id, 'site_label' => (string) ($site['label'] ?? $id)); }
+            foreach ($a['waived'] as $b) { $waived[] = $b + array('site_id' => $id, 'site_label' => $label); }
         }
-        $by_kind = array();
-        foreach ($groups as $g) { $by_kind[$g['kind']][] = $g; }
         foreach ($by_kind as &$list) {
+            // Le righe "in attesa del fornitore" scendono in fondo; il resto per sito e poi per gravita'.
             usort($list, function($a, $b) {
-                return (self::severity_rank($b['severity']) <=> self::severity_rank($a['severity'])) ?: ((int) $b['security'] <=> (int) $a['security'])
-                    ?: (count($b['sites']) <=> count($a['sites'])) ?: ($b['score'] <=> $a['score']) ?: strcasecmp($a['name'], $b['name']);
+                $wa = (int) (($a['mark']['type'] ?? '') === 'waiting' && !empty($a['mark']['live']));
+                $wb = (int) (($b['mark']['type'] ?? '') === 'waiting' && !empty($b['mark']['live']));
+                return ($wa <=> $wb) ?: strcasecmp($a['site_label'], $b['site_label']) ?: Integra_Sentinel_Analysis::compare($a, $b);
             });
         }
         unset($list);
-        $ordered = array();
-        foreach (array_keys(self::kinds()) as $kind) { if (!empty($by_kind[$kind])) { $ordered[$kind] = $by_kind[$kind]; } }
-        $owners = array();
-        foreach ($groups as $g) { $owners[$g['owner']] = ($owners[$g['owner']] ?? 0) + 1; }
-        return self::$memo = array('kinds' => $ordered, 'groups' => count($groups), 'kpi' => $kpi, 'kpi_sites' => $kpi_sites,
-            'waived' => $waived, 'per_site' => $per_site, 'owners' => $owners);
+        $ordered = array(); $total = 0;
+        foreach (array_keys(self::kinds()) as $kind) { if (!empty($by_kind[$kind])) { $ordered[$kind] = $by_kind[$kind]; $total += count($by_kind[$kind]); } }
+        return self::$memo = array('kinds' => $ordered, 'total' => $total, 'groups' => $total, 'sites' => count($with), 'kpi' => $kpi, 'kpi_sites' => $kpi_sites,
+            'waived' => $waived, 'per_site' => $per_site);
     }
 
-    /** Gruppi in ordine di urgenza, indipendentemente dal tipo (per il riepilogo e l'email). */
-    public static function top_groups($fleet, $limit = 6) {
+    /** Le righe piu' urgenti di tutto il parco, qualunque sia la causa (panoramica ed email). */
+    public static function top_items($fleet, $limit = 6) {
         $all = array();
-        foreach ($fleet['kinds'] as $list) { foreach ($list as $g) { $all[] = $g; } }
-        usort($all, function($a, $b) {
-            return (self::severity_rank($b['severity']) <=> self::severity_rank($a['severity'])) ?: ((int) $b['security'] <=> (int) $a['security'])
-                ?: (count($b['sites']) <=> count($a['sites'])) ?: ($b['score'] <=> $a['score']);
-        });
+        foreach ($fleet['kinds'] as $list) {
+            foreach ($list as $b) { if (($b['mark']['type'] ?? '') !== 'waiting' || empty($b['mark']['live'])) { $all[] = $b; } }
+        }
+        usort($all, array('Integra_Sentinel_Analysis', 'compare'));
         return array_slice($all, 0, $limit);
     }
 
     /**
-     * Vista per prodotto: ogni plugin/tema del parco con versioni, stato e ondata di ogni sito.
+     * Vista per prodotto: ogni plugin/tema del parco con versioni e stato su ogni sito.
      * @return array slug|type => name, type, sites (id => dati), latest, versions
      */
     public static function products($fleet) {
@@ -140,34 +122,37 @@ final class Integra_Sentinel_Fleet {
         $out = array();
         foreach ($fleet['per_site'] as $id => $a) {
             $site = $sites[$id] ?? array();
-            $ring = (int) ($site['meta']['ring'] ?? 2);
             foreach ($a['graph']['nodes'] as $n) {
                 if (in_array($n['role'], array('env', 'missing'), true) || $n['origin'] === 'internal') { continue; }
                 $key = 'plugin:' . $n['id'];
-                if (!isset($out[$key])) { $out[$key] = array('type' => 'plugin', 'slug' => $n['id'], 'name' => $n['name'], 'sites' => array(), 'latest' => '', 'premium' => false, 'vuln' => 0); }
+                if (!isset($out[$key])) { $out[$key] = array('type' => 'plugin', 'slug' => $n['id'], 'name' => $n['name'], 'sites' => array(), 'latest' => '', 'premium' => false, 'external' => false, 'envato' => false, 'vuln' => 0); }
                 $p = &$out[$key];
                 $p['premium'] = $p['premium'] || !empty($n['premium']);
+                $p['external'] = $p['external'] || !in_array($n['origin'], array('wporg', 'internal', 'unknown'), true);
+                $p['envato'] = $p['envato'] || !empty($n['envato']);
                 $target = $n['new'] !== '' ? $n['new'] : $n['latest'];
                 foreach (array($n['ver'], $target) as $v) {
                     if (Integra_Sentinel_Dependencies::valid_version((string) $v) && ($p['latest'] === '' || version_compare(ltrim($v, 'v'), ltrim($p['latest'], 'v'), '>'))) { $p['latest'] = (string) $v; }
                 }
                 if (!empty($n['vuln']['count'])) { ++$p['vuln']; }
-                $p['sites'][$id] = array('label' => (string) ($site['label'] ?? $id), 'ring' => $ring, 'ver' => $n['ver'], 'new' => $n['new'], 'latest' => $n['latest'],
+                $p['sites'][$id] = array('label' => (string) ($site['label'] ?? $id), 'ver' => $n['ver'], 'new' => $n['new'], 'latest' => $n['latest'],
                     'status' => $n['status'], 'statusLabel' => $n['statusLabel'], 'active' => $n['active'], 'auto' => !empty($n['auto']),
                     'license' => $n['license'], 'vuln' => $n['vuln'], 'origin' => $n['originLabel'], 'quarantine' => $n['quarantine'], 'reasons' => $n['reasons']);
                 unset($p);
             }
             foreach ($a['themes']['themes'] as $t) {
                 $key = 'theme:' . $t['slug'];
-                if (!isset($out[$key])) { $out[$key] = array('type' => 'theme', 'slug' => $t['slug'], 'name' => $t['name'], 'sites' => array(), 'latest' => '', 'premium' => false, 'vuln' => 0); }
+                if (!isset($out[$key])) { $out[$key] = array('type' => 'theme', 'slug' => $t['slug'], 'name' => $t['name'], 'sites' => array(), 'latest' => '', 'premium' => false, 'external' => false, 'envato' => false, 'vuln' => 0); }
                 $p = &$out[$key];
                 $p['premium'] = $p['premium'] || !empty($t['premium']);
+                $p['external'] = $p['external'] || !empty($t['premium']);
+                $p['envato'] = $p['envato'] || !empty($t['envato']);
                 $target = $t['update'] !== '' ? $t['update'] : $t['latest'];
                 foreach (array($t['version'], $target) as $v) {
                     if (Integra_Sentinel_Dependencies::valid_version((string) $v) && ($p['latest'] === '' || version_compare(ltrim($v, 'v'), ltrim($p['latest'], 'v'), '>'))) { $p['latest'] = (string) $v; }
                 }
                 if (!empty($t['vuln']['count'])) { ++$p['vuln']; }
-                $p['sites'][$id] = array('label' => (string) ($site['label'] ?? $id), 'ring' => $ring, 'ver' => $t['version'], 'new' => $t['update'], 'latest' => $t['latest'],
+                $p['sites'][$id] = array('label' => (string) ($site['label'] ?? $id), 'ver' => $t['version'], 'new' => $t['update'], 'latest' => $t['latest'],
                     'status' => $t['status'], 'statusLabel' => Integra_Sentinel_Dependencies::status_label($t['status']), 'active' => $t['role'] !== '', 'auto' => false,
                     'license' => $t['license'], 'vuln' => $t['vuln'], 'origin' => $t['originLabel'], 'quarantine' => '', 'reasons' => $t['reasons']);
                 unset($p);
@@ -175,28 +160,5 @@ final class Integra_Sentinel_Fleet {
         }
         uasort($out, function($a, $b) { return (count($b['sites']) <=> count($a['sites'])) ?: strcasecmp($a['name'], $b['name']); });
         return $out;
-    }
-
-    /**
-     * Rollout a ondate per un prodotto: l'ondata piu' bassa non ancora allineata e' quella da aggiornare ora.
-     * Ondate: 0 = sito dell'agenzia/test, 1 = siti vetrina, 2 = siti importanti, 3 = e-commerce e critici.
-     */
-    public static function rollout($product) {
-        $latest = (string) $product['latest'];
-        $rings = array();
-        foreach ($product['sites'] as $id => $s) {
-            if (!$s['active']) { continue; }
-            $done = $latest !== '' && Integra_Sentinel_Dependencies::valid_version((string) $s['ver']) && !version_compare(ltrim($s['ver'], 'v'), ltrim($latest, 'v'), '<');
-            $rings[$s['ring']]['total'] = ($rings[$s['ring']]['total'] ?? 0) + 1;
-            $rings[$s['ring']]['done'] = ($rings[$s['ring']]['done'] ?? 0) + ($done ? 1 : 0);
-        }
-        ksort($rings);
-        $current = null;
-        foreach ($rings as $ring => $r) { if ($r['done'] < $r['total']) { $current = $ring; break; } }
-        return array('rings' => $rings, 'current' => $current, 'latest' => $latest);
-    }
-
-    public static function ring_labels() {
-        return array(0 => 'Ondata 0 · sito agenzia / test', 1 => 'Ondata 1 · siti vetrina', 2 => 'Ondata 2 · siti importanti', 3 => 'Ondata 3 · e-commerce e critici');
     }
 }

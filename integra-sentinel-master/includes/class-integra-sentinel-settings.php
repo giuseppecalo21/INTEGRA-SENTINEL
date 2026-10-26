@@ -26,7 +26,7 @@ final class Integra_Sentinel_Settings {
                 'backup_max_days' => 7,
                 'probe_minutes' => 15,
                 'rotation_grace_days' => 7,
-                'license_reminders' => 1,
+                'recheck_days' => 60,            // dopo "aggiornato all'ultima versione" i fuori repository tornano da ricontrollare
             ),
             'bad_versions' => array(),   // array(slug, intervallo, nota)
             'freezes' => array(),        // array(dal, al, etichetta, tag)
@@ -162,22 +162,33 @@ final class Integra_Sentinel_Settings {
         return null;
     }
 
-    /* ---------- Eccezioni approvate ("non aggiornare / accetto il rischio") ---------- */
+    /* ---------- Eccezioni e verifiche sui colli di bottiglia ---------- */
+
+    /**
+     * waiver = eccezione (esce dall'elenco fino alla data), verified = aggiornato a mano all'ultima versione
+     * (torna da ricontrollare alla data), tested = provato e funzionante, waiting = in attesa dell'aggiornamento
+     * del fornitore (resta nell'elenco). tested e waiting valgono finche' non cambiano le versioni coinvolte (sig).
+     */
+    public static function mark_types() {
+        return array('waiver' => 'Eccezione', 'verified' => 'Aggiornato all’ultima versione', 'tested' => 'Provato: funziona', 'waiting' => 'In attesa di aggiornamento');
+    }
 
     public static function waivers() {
         $list = get_option(self::WAIVERS, array());
         return is_array($list) ? $list : array();
     }
 
-    public static function waiver_add($site_id, $kind, $subject, $reason, $until, $fleet = false) {
+    public static function waiver_add($site_id, $kind, $subject, $reason, $until, $fleet = false, $type = 'waiver', $sig = '', $name = '') {
         $kind = sanitize_key($kind);
         $subject = substr(sanitize_text_field($subject), 0, 120);
+        if (!isset(self::mark_types()[$type])) { $type = 'waiver'; }
         if ($kind === '' || $subject === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $until)) { return false; }
         $list = self::waivers();
         $id = substr(md5(($fleet ? '*' : $site_id) . '|' . $kind . '|' . $subject), 0, 12);
         $user = wp_get_current_user();
         $list[$id] = array(
             'id' => $id, 'site_id' => $fleet ? '*' : substr((string) $site_id, 0, 36), 'kind' => $kind, 'subject' => $subject,
+            'name' => substr(sanitize_text_field($name), 0, 120), 'type' => $type, 'sig' => substr(sanitize_key($sig), 0, 32),
             'reason' => substr(sanitize_text_field($reason), 0, 240), 'until' => $until,
             'by' => (string) ($user->user_login ?? ''), 'at' => time(),
         );
@@ -191,15 +202,15 @@ final class Integra_Sentinel_Settings {
         return update_option(self::WAIVERS, $list, false);
     }
 
-    public static function waiver_for($site_id, $kind, $subject) {
-        static $today = null;
-        if ($today === null) { $today = wp_date('Y-m-d'); }
+    /** La segnatura del sito, altrimenti quella valida per tutto il parco; anche scaduta (serve per "da ricontrollare"). */
+    public static function mark_for($site_id, $kind, $subject) {
+        $fleet = null;
         foreach (self::waivers() as $w) {
             if (($w['kind'] ?? '') !== $kind || ($w['subject'] ?? '') !== $subject) { continue; }
-            if (($w['site_id'] ?? '') !== '*' && ($w['site_id'] ?? '') !== $site_id) { continue; }
-            if (($w['until'] ?? '') >= $today) { return $w; }
+            if (($w['site_id'] ?? '') === $site_id) { return $w + array('type' => 'waiver', 'sig' => ''); }
+            if (($w['site_id'] ?? '') === '*') { $fleet = $w + array('type' => 'waiver', 'sig' => ''); }
         }
-        return null;
+        return $fleet;
     }
 
     /* ---------- Permessi: visione e gestione assegnabili ai ruoli, senza modificare i ruoli salvati ---------- */

@@ -589,46 +589,35 @@
   function all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
   function lower(s) { return String(s || '').toLocaleLowerCase(); }
 
-  // Centro colli di bottiglia: chi deve agire + ricerca testuale.
+  // Centro colli di bottiglia: ricerca per sito, componente o problema.
   all('[data-sn-center]').forEach(function (center) {
-    var owner = 'all';
     var search = center.querySelector('[data-sn-center-search]');
     var empty = center.querySelector('[data-sn-center-empty]');
-    var chips = all('[data-sn-owner]', center).filter(function (el) { return el.tagName === 'BUTTON'; });
     function apply() {
       var term = search ? lower(search.value.trim()) : '';
       var visible = 0;
       all('.sn-kind', center).forEach(function (kind) {
         var shown = 0;
         all('.sn-group', kind).forEach(function (g) {
-          var ok = (owner === 'all' || g.getAttribute('data-sn-owner') === owner) && (!term || lower(g.getAttribute('data-sn-text')).indexOf(term) !== -1);
+          var ok = !term || lower(g.getAttribute('data-sn-text')).indexOf(term) !== -1;
           g.hidden = !ok;
           if (ok) shown += 1;
         });
         kind.hidden = shown === 0;
-        if (shown && (owner !== 'all' || term)) kind.open = true;
+        if (shown && term) kind.open = true;
         visible += shown;
       });
       if (empty) empty.hidden = visible > 0;
     }
-    chips.forEach(function (chip) {
-      chip.addEventListener('click', function () {
-        owner = chip.getAttribute('data-sn-owner');
-        chips.forEach(function (c) { var on = c === chip; c.classList.toggle('is-selected', on); c.setAttribute('aria-pressed', on ? 'true' : 'false'); });
-        apply();
-      });
-    });
     if (search) search.addEventListener('input', apply);
-    // Apertura del gruppo indicato nell'URL (#sn-g-...) con le sue azioni.
+    // Apertura della riga indicata nell'URL (#sn-i-...), arrivando dalla scheda di un sito.
     function openFromHash() {
-      if (!location.hash || location.hash.indexOf('#sn-g-') !== 0) return;
+      if (!location.hash || location.hash.indexOf('#sn-i-') !== 0) return;
       var g = document.getElementById(location.hash.slice(1));
       if (!g || !center.contains(g)) return;
       var kind = g.closest('.sn-kind');
       if (kind) { kind.hidden = false; kind.open = true; }
       g.hidden = false;
-      var actions = g.querySelector('.sn-group-actions');
-      if (actions) actions.open = true;
       g.classList.add('is-target');
       g.scrollIntoView({block: 'center'});
     }
@@ -636,22 +625,92 @@
     openFromHash();
   });
 
-  // Ricerca nelle tabelle (prodotti del parco).
-  all('[data-sn-table-search]').forEach(function (input) {
-    var id = input.getAttribute('data-sn-table-search');
-    var table = document.getElementById(id);
-    var empty = document.querySelector('[data-sn-table-empty="' + id + '"]');
-    if (!table) return;
-    input.addEventListener('input', function () {
-      var term = lower(input.value.trim());
-      var visible = 0;
-      all('tbody tr', table).forEach(function (row) {
-        var ok = !term || lower(row.getAttribute('data-sn-name')).indexOf(term) !== -1;
-        row.hidden = !ok;
-        if (ok) visible += 1;
+  // Plugin e temi del parco: schede Plugin/Temi, siti accesi o spenti e ricerca. Le colonne si ricalcolano sui siti accesi.
+  all('[data-sn-fleet]').forEach(function (root) {
+    var chips = all('[data-sn-fleet-site]', root);
+    var tabs = all('[data-sn-ftab]', root);
+    var search = root.querySelector('[data-sn-fleet-search]');
+    var counter = root.querySelector('[data-sn-fleet-count]');
+    var STORE = 'snFleetOff';
+    var off = {};
+    try { (JSON.parse(localStorage.getItem(STORE) || '[]') || []).forEach(function (id) { off[id] = true; }); } catch (e) {}
+    function cmp(a, b) {
+      var x = String(a).replace(/^v/i, '').split(/[.\-+]/), y = String(b).replace(/^v/i, '').split(/[.\-+]/);
+      for (var i = 0; i < Math.max(x.length, y.length); i++) {
+        var p = parseInt(x[i] || '0', 10), q = parseInt(y[i] || '0', 10);
+        if (isNaN(p) || isNaN(q)) { var c = String(x[i] || '').localeCompare(String(y[i] || '')); if (c) return c; continue; }
+        if (p !== q) return p < q ? -1 : 1;
+      }
+      return 0;
+    }
+    function badge(text, tone) { var s = document.createElement('span'); s.className = 'sn-badge sn-' + tone; s.textContent = text; return s; }
+    function recompute(row) {
+      var data; try { data = JSON.parse(row.getAttribute('data-sn-sites') || '{}'); } catch (e) { data = {}; }
+      var n = 0, names = [], versions = {}, behind = 0, vuln = 0, blocked = 0, lic = 0, blind = 0;
+      Object.keys(data).forEach(function (id) {
+        if (off[id]) return;
+        var s = data[id]; n += 1; names.push(s.l);
+        if (s.v) versions[s.v] = true;
+        behind += s.b; vuln += s.x; blocked += s.k; lic += s.c; blind += s.u;
       });
-      if (empty) empty.hidden = visible > 0;
+      row.setAttribute('data-sn-n', n);
+      if (!n) return;
+      names.sort(function (a, b) { return a.localeCompare(b); });
+      var vl = Object.keys(versions).sort(cmp);
+      row.querySelector('[data-sn-col="n"]').textContent = n;
+      row.querySelector('[data-sn-col="names"]').textContent = names.slice(0, 4).join(', ') + (names.length > 4 ? ' +' + (names.length - 4) : '');
+      row.querySelector('[data-sn-col="range"]').textContent = vl.length ? (vl.length > 1 ? vl[0] + ' – ' + vl[vl.length - 1] + ' (' + vl.length + ' versioni)' : vl[0]) : '—';
+      var bc = row.querySelector('[data-sn-col="behind"]'); bc.textContent = '';
+      if (behind) { var st = document.createElement('strong'); st.textContent = behind; bc.appendChild(st); } else { bc.textContent = '0'; }
+      var ic = row.querySelector('[data-sn-col="issues"]'); ic.textContent = '';
+      [[vuln, ' vulnerabili', 'danger'], [blocked, ' bloccati', 'high'], [lic, ' licenza', 'premium'], [blind, ' versione ignota', 'muted']].forEach(function (b) {
+        if (b[0]) { ic.appendChild(badge(b[0] + b[1], b[2])); ic.appendChild(document.createTextNode(' ')); }
+      });
+    }
+    function apply() {
+      var term = search ? lower(search.value.trim()) : '';
+      var active = chips.filter(function (c) { return !off[c.getAttribute('data-sn-fleet-site')]; }).length;
+      if (counter) counter.textContent = active + ' di ' + chips.length + ' attivi';
+      chips.forEach(function (c) { var on = !off[c.getAttribute('data-sn-fleet-site')]; c.classList.toggle('is-selected', on); c.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+      tabs.forEach(function (t) {
+        var type = t.getAttribute('data-sn-ftab');
+        var panel = document.getElementById('sn-fpanel-' + type);
+        var visible = 0;
+        all('tbody tr', panel).forEach(function (row) {
+          recompute(row);
+          var ok = row.getAttribute('data-sn-n') !== '0' && (!term || lower(row.getAttribute('data-sn-name')).indexOf(term) !== -1);
+          row.hidden = !ok;
+          if (ok) visible += 1;
+        });
+        var cnt = root.querySelector('[data-sn-ftab-count="' + type + '"]'); if (cnt) cnt.textContent = visible;
+        var empty = panel.querySelector('[data-sn-fleet-empty]'); if (empty) empty.hidden = visible > 0;
+      });
+      try { localStorage.setItem(STORE, JSON.stringify(Object.keys(off))); } catch (e) {}
+    }
+    chips.forEach(function (c) {
+      c.addEventListener('click', function () { var id = c.getAttribute('data-sn-fleet-site'); if (off[id]) delete off[id]; else off[id] = true; apply(); });
     });
+    all('[data-sn-fleet-all]', root).forEach(function (b) {
+      b.addEventListener('click', function () {
+        off = {};
+        if (b.getAttribute('data-sn-fleet-all') === '0') chips.forEach(function (c) { off[c.getAttribute('data-sn-fleet-site')] = true; });
+        apply();
+      });
+    });
+    tabs.forEach(function (t) {
+      t.addEventListener('click', function () {
+        tabs.forEach(function (o) {
+          var on = o === t;
+          o.classList.toggle('is-selected', on); o.setAttribute('aria-selected', on ? 'true' : 'false');
+          document.getElementById('sn-fpanel-' + o.getAttribute('data-sn-ftab')).hidden = !on;
+        });
+      });
+    });
+    if (search) search.addEventListener('input', apply);
+    // Siti rimossi dal Master: non restano spenti per sempre.
+    var known = {}; chips.forEach(function (c) { known[c.getAttribute('data-sn-fleet-site')] = true; });
+    Object.keys(off).forEach(function (id) { if (!known[id]) delete off[id]; });
+    apply();
   });
 
   // Filtri delle schede dei siti in panoramica.
