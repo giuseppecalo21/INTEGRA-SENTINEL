@@ -122,22 +122,23 @@ final class Integra_Sentinel_Dependencies {
     }
 
     /**
-     * Versioni piu' recenti viste nell'intero parco siti, per slug e nome normalizzato.
-     * Il nome deve coincidere: due plugin "su misura" con lo stesso slug non si influenzano.
+     * Versioni piu' recenti viste nell'intero parco siti (installate o proposte da WordPress), per slug e nome normalizzato.
+     * Il nome deve coincidere: due plugin "su misura" con lo stesso slug non si influenzano. $type: plugins | themes.
      */
-    public static function fleet_versions($sites) {
+    public static function fleet_versions($sites, $type = 'plugins') {
         $out = array();
         foreach ((array) $sites as $site) {
             if (!is_array($site)) { continue; }
             $label = (string) ($site['label'] ?? '');
-            foreach ((array) ($site['report']['plugins'] ?? array()) as $p) {
+            foreach ((array) ($site['report'][$type] ?? array()) as $p) {
                 $slug = (string) ($p['slug'] ?? '');
                 if ($slug === '') { continue; }
                 $key = $slug . '|' . self::normalize_name($p['name'] ?? '');
-                foreach (array((string) ($p['version'] ?? ''), (string) ($p['update']['version'] ?? '')) as $v) {
+                $offered = $type === 'themes' ? (string) ($p['update'] ?? '') : (string) ($p['update']['version'] ?? '');
+                foreach (array('installed' => (string) ($p['version'] ?? ''), 'offered' => $offered) as $how => $v) {
                     if (!self::valid_version($v)) { continue; }
                     if (!isset($out[$key]) || self::newer($v, $out[$key]['version'])) {
-                        $out[$key] = array('version' => $v, 'site' => $label);
+                        $out[$key] = array('version' => $v, 'site' => $label, 'how' => $how);
                     }
                 }
             }
@@ -146,14 +147,46 @@ final class Integra_Sentinel_Dependencies {
     }
 
     /**
+     * Incrocio con gli altri siti per i componenti fuori dalla libreria WordPress.org: se altrove c'e' una versione
+     * piu' recente (installata, proposta o verificata a mano come ultima), qui esiste almeno un aggiornamento.
+     * @return array version, source, note (se c'e' una versione piu' recente), known, verified (stessa versione verificata come ultima)
+     */
+    public static function fleet_reference($slug, $name, $current, $fleet, $verified) {
+        $key = $slug . '|' . self::normalize_name($name);
+        $out = array('version' => '', 'source' => '', 'note' => '', 'known' => false, 'verified' => '');
+        $site = '';
+        if (!empty($fleet[$key]['version']) && self::newer($fleet[$key]['version'], $current)) {
+            $f = $fleet[$key];
+            $site = $f['site'] !== '' ? $f['site'] : 'un altro sito';
+            $out = array_merge($out, array('version' => $f['version'], 'known' => true,
+                'source' => ($f['how'] === 'offered' ? 'proposta su ' : 'installata su ') . $site,
+                'note' => ($f['how'] === 'offered' ? 'Su ' . $site . ' WordPress propone già la ' : 'Su ' . $site . ' è già installata la ') . $f['version'] . ': esiste almeno un aggiornamento, anche se non è nel catalogo.'));
+        }
+        if (!empty($verified[$key]['version'])) {
+            $v = $verified[$key];
+            if ($out['version'] !== '' && !self::newer($v['version'], $out['version']) && !self::newer($out['version'], $v['version'])) {
+                $out['note'] .= ($v['site'] === $site ? ' Lì' : ' Su ' . $v['site']) . ' è stata verificata come ultima versione il ' . $v['date'] . '.';
+            } elseif (self::newer($v['version'], $current) && ($out['version'] === '' || self::newer($v['version'], $out['version']))) {
+                $out = array_merge($out, array('version' => $v['version'], 'known' => true, 'source' => 'verificata come ultima su ' . $v['site'] . ' il ' . $v['date'],
+                    'note' => 'Su ' . $v['site'] . ' la ' . $v['version'] . ' è stata verificata come ultima versione il ' . $v['date'] . ': questo sito è indietro.'));
+            } elseif ($out['version'] === '' && !self::newer($current, $v['version'])) {
+                $out['known'] = true;
+                $out['verified'] = 'Stessa versione verificata come ultima su ' . $v['site'] . ' il ' . $v['date'] . '.';
+            }
+        }
+        return $out;
+    }
+
+    /**
      * Analizza l'inventario di un sito.
-     * $ctx: fleet, catalog, manual, vulns; dalla 1.8 anche wporg (info WordPress.org), integrity (file principale
+     * $ctx: fleet, verified (versioni segnate come ultime), catalog, manual, vulns; dalla 1.8 anche wporg (info WordPress.org), integrity (file principale
      * diverso dall'originale), owners (chi possiede la licenza), bad (versioni da evitare), quarantine, abandoned_years,
      * auto (slug con aggiornamento automatico), bundle_theme (tema che include i plugin TGMPA), now.
      */
     public static function analyze($report, $ctx = array()) {
         $report = is_array($report) ? $report : array();
         $fleet   = (array) ($ctx['fleet'] ?? array());
+        $verified = (array) ($ctx['verified'] ?? array());
         $catalog = (array) ($ctx['catalog'] ?? array());
         $manual  = (array) ($ctx['manual'] ?? array());
         $vulns   = (array) ($ctx['vulns'] ?? array());
@@ -182,10 +215,11 @@ final class Integra_Sentinel_Dependencies {
         $nodes = array();
         foreach ($plugins as $slug => $p) {
             $origin = self::origin($p, $bundled);
-            $latest = self::latest_known($p, $fleet, $catalog, $bundled);
+            $latest = self::latest_known($p, $fleet, $catalog, $bundled, $verified);
             $node = array(
                 'id' => $slug, 'name' => (string) ($p['name'] ?? $slug), 'ver' => (string) ($p['version'] ?? ''),
                 'new' => (string) ($p['update']['version'] ?? ''), 'latest' => $latest['version'], 'latestSrc' => $latest['source'],
+                'latestNote' => $latest['note'], 'verifiedNote' => $latest['verified'],
                 'catalogUrl' => $latest['url'],
                 'active' => !empty($p['active']), 'origin' => $origin['key'], 'originLabel' => $origin['label'],
                 'originHint' => $origin['hint'], 'premium' => $origin['premium'], 'envato' => $origin['envato'],
@@ -477,7 +511,7 @@ final class Integra_Sentinel_Dependencies {
             foreach ($n['softHolds'] as $h) { $reasons[] = 'Compatibilità con ' . $nodes[$h]['name'] . ' ' . $nodes[$h]['new'] . ' non dichiarata.'; }
             foreach ($n['needsFirst'] as $f) { $reasons[] = 'Aggiornare prima ' . ($nodes[$f]['name'] ?? $f) . '.'; }
             if ($n['new'] === '' && $behind && $n['premium']) {
-                $reasons[] = 'Disponibile ' . $n['latest'] . ' (' . $n['latestSrc'] . '): aggiornamento manuale dal fornitore.';
+                $reasons[] = ($n['latestNote'] ?? '') !== '' ? $n['latestNote'] . ' Va aggiornato a mano dal fornitore.' : 'Disponibile ' . $n['latest'] . ' (' . $n['latestSrc'] . '): aggiornamento manuale dal fornitore.';
             }
             if ($n['vuln'] && !empty($n['vuln']['count'])) {
                 $reasons[] = (int) $n['vuln']['count'] . ' vulnerabilità note sulla versione installata' . (!empty($n['vuln']['fixed']) ? ' (corrette dalla ' . $n['vuln']['fixed'] . ')' : '') . '.';
@@ -509,6 +543,7 @@ final class Integra_Sentinel_Dependencies {
             if ($n['modifiedNote'] !== '') { $reasons[] = $n['modifiedNote']; }
             if ($n['bundleTheme'] !== '') { $reasons[] = 'Incluso nel tema ' . $n['bundleTheme'] . ': si aggiorna con il pacchetto del tema.'; }
             if ($n['blind'] && !$behind) { $reasons[] = 'Nessun canale di aggiornamento e nessuna versione di riferimento: impossibile sapere se è aggiornato.'; }
+            if (($n['verifiedNote'] ?? '') !== '') { $reasons[] = $n['verifiedNote']; }
 
             if ($n['blockers']) { $status = 'blocked'; }
             elseif ($n['holds']) { $status = 'bottleneck'; }
@@ -662,10 +697,10 @@ final class Integra_Sentinel_Dependencies {
      * Versione piu' recente nota da: WordPress/fornitore, catalogo (manuale o acquisti Envato), pacchetto del tema, parco siti.
      * "known" = esiste una fonte autorevole sull'ultima versione: le versioni viste sugli altri siti sono solo un limite inferiore.
      */
-    private static function latest_known($p, $fleet, $catalog, $bundled) {
+    private static function latest_known($p, $fleet, $catalog, $bundled, $verified = array()) {
         $slug = (string) ($p['slug'] ?? '');
         $current = (string) ($p['version'] ?? '');
-        $best = array('version' => '', 'source' => '', 'url' => '', 'known' => false);
+        $best = array('version' => '', 'source' => '', 'url' => '', 'known' => false, 'note' => '', 'verified' => '');
         $candidates = array();
         if (!empty($p['update']['version'])) { $candidates[] = array((string) $p['update']['version'], 'aggiornamento segnalato dal sito', ''); $best['known'] = true; }
         if (!empty($catalog[$slug]['version'])) {
@@ -673,15 +708,15 @@ final class Integra_Sentinel_Dependencies {
             $best['known'] = true;
         }
         if (!empty($bundled[$slug]['version']) && ($bundled[$slug]['source'] ?? '') === 'bundled') { $candidates[] = array((string) $bundled[$slug]['version'], 'pacchetto del tema', ''); $best['known'] = true; }
-        $fleet_key = $slug . '|' . self::normalize_name($p['name'] ?? '');
-        $is_wporg = (string) ($p['channel']['type'] ?? '') === 'wporg';
-        if (!$is_wporg && !empty($fleet[$fleet_key]['version'])) {
-            $candidates[] = array((string) $fleet[$fleet_key]['version'], 'visto su ' . ($fleet[$fleet_key]['site'] ?: 'altro sito'), '');
+        if ((string) ($p['channel']['type'] ?? '') !== 'wporg') {
+            $ref = self::fleet_reference($slug, (string) ($p['name'] ?? ''), $current, $fleet, $verified);
+            if ($ref['version'] !== '') { $candidates[] = array($ref['version'], $ref['source'], '', $ref['note']); }
+            if ($ref['known']) { $best['known'] = true; $best['verified'] = $ref['verified']; }
         }
         foreach ($candidates as $c) {
             if (!self::newer($c[0], $current)) { continue; }
             if ($best['version'] === '' || self::newer($c[0], $best['version'])) {
-                $best = array_merge($best, array('version' => $c[0], 'source' => $c[1], 'url' => $c[2]));
+                $best = array_merge($best, array('version' => $c[0], 'source' => $c[1], 'url' => $c[2], 'note' => (string) ($c[3] ?? '')));
             }
         }
         if ($best['url'] === '' && !empty($catalog[$slug]['url'])) { $best['url'] = (string) $catalog[$slug]['url']; }
@@ -792,14 +827,14 @@ final class Integra_Sentinel_Dependencies {
             if ($n['status'] === 'manual') {
                 $add($id, $bundled ? 'bundled' : 'manual', $vuln ? 'high' : 'low', 6 + ($vuln ? 30 : 0),
                     $n['name'] . ': ' . $n['ver'] . ' → ' . $n['latest'] . ($bundled ? ' nel pacchetto del tema' : ' disponibile fuori da WordPress'),
-                    'Fonte: ' . $n['latestSrc'] . '. ' . $n['originLabel'] . '.' . ($n['bundleTheme'] !== '' ? ' Incluso nel tema ' . $n['bundleTheme'] . '.' : ''),
+                    (($n['latestNote'] ?? '') !== '' ? $n['latestNote'] : 'Fonte: ' . $n['latestSrc'] . '.') . ' ' . $n['originLabel'] . '.' . ($n['bundleTheme'] !== '' ? ' Incluso nel tema ' . $n['bundleTheme'] . '.' : ''),
                     $bundled ? 'Aggiornare il tema (serve la sua licenza) oppure installare il pacchetto aggiornato incluso nel tema.' : 'Scaricare il pacchetto dal fornitore (licenza dell\'agenzia o del cliente) e aggiornare manualmente.',
                     array($id), array('security' => $vuln));
             } elseif ($n['blind'] && in_array($n['status'], array('blind', 'warn', 'abandoned'), true)) {
                 $add($id, $bundled ? 'bundled' : 'blind', $vuln ? 'high' : 'low', 4 + ($vuln ? 30 : 0),
                     $n['name'] . ': ' . ($bundled ? 'incluso nel tema, versione più recente sconosciuta' : 'ultima versione sconosciuta'),
                     $n['originLabel'] . '. Nessun canale di aggiornamento e nessuna versione di riferimento nel catalogo, negli acquisti Envato o negli altri siti.',
-                    $bundled ? 'Verificare se il tema' . ($n['bundleTheme'] !== '' ? ' ' . $n['bundleTheme'] : '') . ' ha una versione più recente con il plugin aggiornato.' : 'Verificare la versione sul sito del fornitore e inserirla nel catalogo premium (Impostazioni).',
+                    $bundled ? 'Verificare se il tema' . ($n['bundleTheme'] !== '' ? ' ' . $n['bundleTheme'] : '') . ' ha una versione più recente con il plugin aggiornato.' : 'Verificare la versione sul sito del fornitore: se è già l\'ultima, segnarlo con «Aggiornato all\'ultima versione», altrimenti aggiornare.',
                     array($id), array('security' => $vuln));
             }
             if ($n['abandoned'] !== '') {
@@ -898,7 +933,7 @@ final class Integra_Sentinel_Dependencies {
         foreach ($nodes as $n) {
             if (in_array($n['role'], array('env', 'missing'), true)) { continue; }
             $solo = $n['role'] === 'solo';
-            if ($n['status'] === 'manual') { $manual[] = $item($n, 'Fonte: ' . $n['latestSrc'] . '. ' . $n['originLabel'] . '.'); }
+            if ($n['status'] === 'manual') { $manual[] = $item($n, (($n['latestNote'] ?? '') !== '' ? $n['latestNote'] : 'Fonte: ' . $n['latestSrc'] . '.') . ' ' . $n['originLabel'] . '.'); }
             if ($solo && $n['status'] === 'license' && $n['new'] !== '') { $license[] = $item($n, implode(' ', array_slice($n['reasons'], 0, 1)), 'license'); }
             if ($solo && $n['quarantine'] !== '' && $n['status'] !== 'license') { $quarantine[] = $item($n, 'Aggiornabile dal ' . gmdate('d/m', (int) strtotime($n['quarantine'])) . ', salvo problemi segnalati.', 'warn'); }
             if ($solo && $n['badTarget'] !== '') { $avoid[] = $item($n, $n['badTarget'], 'blocked'); }

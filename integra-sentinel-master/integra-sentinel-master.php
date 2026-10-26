@@ -3,7 +3,7 @@
  * Plugin Name: Integra Sentinel Master
  * Plugin URI: https://integracorporate.it/
  * Description: Centrale privata in sola lettura per aggiornamenti, colli di bottiglia, dipendenze, vulnerabilita CVE e integrita anti-intrusione dei siti WordPress gestiti da Integra.
- * Version: 1.11.0
+ * Version: 1.11.1
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: Integra
@@ -34,7 +34,7 @@ require_once __DIR__ . '/includes/class-integra-sentinel-admin-pages.php';
 require_once __DIR__ . '/includes/class-integra-sentinel-cli.php';
 
 final class Integra_Sentinel_Master {
-    const VERSION = '1.11.0';
+    const VERSION = '1.11.1';
     const SITES = 'integra_sentinel_master_sites';
     const FEEDS = 'integra_sentinel_master_feeds';
     const MAIL = 'integra_sentinel_master_email';
@@ -3010,8 +3010,9 @@ final class Integra_Sentinel_Master {
                 $own = $state['state'] === 'internal';
                 $origin = '';
                 if ($cat === 'external' && $gn) {
-                    $origin = ' · ' . $gn['originLabel'] . ($update === '' && $avail !== '' ? ' · versione nota da ' . $gn['latestSrc'] : '')
-                        . ($avail === '' && in_array($gn['origin'], array('nochannel', 'unknown', 'custom'), true) ? ' · ultima versione non nota' : '');
+                    $origin = ' · ' . $gn['originLabel'] . ($update === '' && $avail !== '' ? ' · fonte: ' . $gn['latestSrc'] : '')
+                        . ($avail === '' && ($gn['verifiedNote'] ?? '') !== '' ? ' · verificata come ultima versione'
+                        : ($avail === '' && in_array($gn['origin'], array('nochannel', 'unknown', 'custom'), true) ? ' · ultima versione non nota' : ''));
                 }
                 echo '<details class="sn-plugin-entry sn-entry-' . esc_attr($risk ? $tier : ($state['state'] !== 'ok' && !$own ? 'review' : 'clear')) . '" id="sn-plugin-' . esc_attr(sanitize_html_class($p['slug'])) . '" data-sn-name="' . esc_attr(strtolower($p['name'] . ' ' . $p['slug'])) . '"><summary>';
                 echo '<span class="sn-plugin-icon" aria-hidden="true">' . self::e(strtoupper(substr(trim((string) $p['name']), 0, 1))) . '</span><span class="sn-plugin-main"><strong>' . self::e($p['name']) . '</strong><small>' . self::e($p['version']) . ($avail !== '' ? ' → ' . self::e($avail) : '') . ' · ' . ($p['active'] ? 'Attivo' : 'Inattivo') . ($gn && $gn['auto'] ? ' · aggiornamento automatico' : '') . self::e($origin) . '</small></span><span class="sn-plugin-flags">';

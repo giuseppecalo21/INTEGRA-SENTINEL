@@ -52,6 +52,8 @@ final class Integra_Sentinel_Analysis {
         return self::$ctx = array(
             'sites' => $sites,
             'fleet' => Integra_Sentinel_Dependencies::fleet_versions($sites),
+            'fleet_themes' => Integra_Sentinel_Dependencies::fleet_versions($sites, 'themes'),
+            'verified' => self::verified_versions($sites),
             'catalog' => $catalog,
             'manual' => (array) $deps['rules'],
             'wporg' => Integra_Sentinel_Intel::wporg_info(),
@@ -94,9 +96,9 @@ final class Integra_Sentinel_Analysis {
         $policies = $ctx['policies'];
         $env = (array) ($report['env'] ?? array());
 
-        $themes = Integra_Sentinel_Themes::analyze($report, array('catalog' => $ctx['catalog'], 'theme_hashes' => $ctx['theme_hashes'], 'vulns' => $theme_vulns, 'owners' => $owners));
+        $themes = Integra_Sentinel_Themes::analyze($report, array('catalog' => $ctx['catalog'], 'fleet' => $ctx['fleet_themes'], 'verified' => $ctx['verified'], 'theme_hashes' => $ctx['theme_hashes'], 'vulns' => $theme_vulns, 'owners' => $owners));
         $graph = Integra_Sentinel_Dependencies::analyze($report, array(
-            'fleet' => $ctx['fleet'], 'catalog' => $ctx['catalog'], 'manual' => $ctx['manual'], 'vulns' => $vulns,
+            'fleet' => $ctx['fleet'], 'verified' => $ctx['verified'], 'catalog' => $ctx['catalog'], 'manual' => $ctx['manual'], 'vulns' => $vulns,
             'wporg' => $ctx['wporg'], 'integrity' => self::plugin_integrity($report, $ctx), 'owners' => $owners, 'bad' => $ctx['bad'],
             'quarantine' => array('days' => (int) ($policies['quarantine_days'] ?? 5), 'scope' => (string) ($policies['quarantine_scope'] ?? 'hubs')),
             'abandoned_years' => (int) ($policies['abandoned_years'] ?? 2),
@@ -119,6 +121,7 @@ final class Integra_Sentinel_Analysis {
             $b['subject'] = (string) $b['subject'];
             $b['minutes'] = self::minutes_for($b, $ctx['estimates']);
             $b['sig'] = self::signature($b, $nodes);
+            $b['ver'] = self::installed_version($b, $nodes, $themes);
             $mark = Integra_Sentinel_Settings::mark_for($id, (string) $b['kind'], $b['subject']);
             if ($mark) {
                 $live = (string) ($mark['until'] ?? '') >= $today;
@@ -165,6 +168,32 @@ final class Integra_Sentinel_Analysis {
         );
         return self::$memo[$key] = array('graph' => $graph, 'themes' => $themes, 'environment' => $environment, 'core' => $core,
             'bottlenecks' => $active, 'waived' => $waived, 'summary' => $summary);
+    }
+
+    /**
+     * Versioni segnate a mano come "ultima versione" e ancora valide, per slug e nome: valgono da riferimento
+     * anche per gli altri siti con lo stesso componente.
+     */
+    private static function verified_versions($sites) {
+        $today = wp_date('Y-m-d');
+        $out = array();
+        foreach (Integra_Sentinel_Settings::waivers() as $w) {
+            if (($w['type'] ?? '') !== 'verified' || (string) ($w['until'] ?? '') < $today || !Integra_Sentinel_Dependencies::valid_version((string) ($w['ver'] ?? ''))) { continue; }
+            $key = (string) $w['subject'] . '|' . Integra_Sentinel_Dependencies::normalize_name((string) ($w['name'] ?? ''));
+            if (isset($out[$key]) && !Integra_Sentinel_Dependencies::newer((string) $w['ver'], $out[$key]['version'])) { continue; }
+            $site = ($w['site_id'] ?? '') === '*' ? 'un sito del parco' : (string) ($sites[$w['site_id']]['label'] ?? 'un sito del parco');
+            $out[$key] = array('version' => (string) $w['ver'], 'site' => $site, 'date' => wp_date('d/m/Y', (int) ($w['at'] ?? time())));
+        }
+        return $out;
+    }
+
+    /** Versione installata del componente di un problema (plugin dalla mappa, tema dall'analisi dei temi). */
+    private static function installed_version($b, $nodes, $themes) {
+        if (isset($nodes[$b['node']])) { return (string) $nodes[$b['node']]['ver']; }
+        if (strpos((string) ($b['id'] ?? ''), 'theme:') === 0) {
+            foreach ($themes['themes'] as $t) { if ($t['slug'] === $b['subject']) { return (string) $t['version']; } }
+        }
+        return '';
     }
 
     /** Impronta delle versioni coinvolte in un problema: componente, versione installata e versioni in arrivo dei plugin collegati. */

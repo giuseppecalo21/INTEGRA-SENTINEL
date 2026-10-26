@@ -178,7 +178,7 @@ final class Integra_Sentinel_Settings {
         return is_array($list) ? $list : array();
     }
 
-    public static function waiver_add($site_id, $kind, $subject, $reason, $until, $fleet = false, $type = 'waiver', $sig = '', $name = '') {
+    public static function waiver_add($site_id, $kind, $subject, $reason, $until, $fleet = false, $type = 'waiver', $sig = '', $name = '', $ver = '') {
         $kind = sanitize_key($kind);
         $subject = substr(sanitize_text_field($subject), 0, 120);
         if (!isset(self::mark_types()[$type])) { $type = 'waiver'; }
@@ -189,6 +189,7 @@ final class Integra_Sentinel_Settings {
         $list[$id] = array(
             'id' => $id, 'site_id' => $fleet ? '*' : substr((string) $site_id, 0, 36), 'kind' => $kind, 'subject' => $subject,
             'name' => substr(sanitize_text_field($name), 0, 120), 'type' => $type, 'sig' => substr(sanitize_key($sig), 0, 32),
+            'ver' => Integra_Sentinel_Dependencies::valid_version((string) $ver) ? (string) $ver : '',
             'reason' => substr(sanitize_text_field($reason), 0, 240), 'until' => $until,
             'by' => (string) ($user->user_login ?? ''), 'at' => time(),
         );

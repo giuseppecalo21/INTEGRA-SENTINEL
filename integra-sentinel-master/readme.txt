@@ -3,7 +3,7 @@ Contributors: integra
 Tags: wordpress, vulnerability, monitoring, security, updates
 Requires at least: 6.5
 Requires PHP: 7.4
-Stable tag: 1.11.0
+Stable tag: 1.11.1
 License: GPLv2 or later
 
 Monitoraggio centralizzato degli aggiornamenti e delle vulnerabilita di siti WordPress.
@@ -11,6 +11,11 @@ Author: Integra | https://integracorporate.it/
 
 Principio: il Master e' in SOLA LETTURA verso i siti dei clienti. Non installa, non aggiorna e non modifica nulla:
 riceve i report firmati dei Client, consulta fonti esterne e documenta. Tutto il lavoro pesante resta sul Master.
+
+== 1.11.1 - 26 October 2026 ==
+* Versioni incrociate tra i siti, anche per i temi (prima solo per i plugin): se un plugin o un tema fuori repository e' piu' recente su un altro sito, o WordPress lo propone li', qui c'e' sicuramente almeno un aggiornamento, anche se non e' nel catalogo. La nota lo dice esplicitamente, per esempio "Su Zona Wrestling e' gia' installata la 6.6: esiste almeno un aggiornamento, anche se non e' nel catalogo".
+* "Aggiornato all'ultima versione" registra la versione installata e la usa come riferimento per tutti i siti finche' la verifica e' valida: i siti con la stessa versione escono dai punti ciechi, quelli con una versione precedente risultano da aggiornare a mano, con la data della verifica nella nota.
+* Punti ciechi: il "cosa fare" suggerisce di controllare dal fornitore e poi segnare "Aggiornato all'ultima versione", invece di compilare il catalogo premium.
 
 == 1.11.0 - 26 October 2026 ==
 * Tolte le pagine Interventi e Licenze, con i promemoria delle licenze, la chiusura automatica degli interventi e le voci collegate in panoramica, email e report. I dati gia' salvati restano nel database ma non si usano piu'. Il collegamento Envato (versioni dei premium acquistati) passa in Impostazioni.

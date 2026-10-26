@@ -241,7 +241,7 @@ final class Integra_Sentinel_Admin {
     }
 
     private static function item_actions($b, $waiting) {
-        $base = array('site_id' => $b['site_id'], 'kind' => $b['kind'], 'subject' => $b['subject'], 'sig' => $b['sig'], 'name' => $b['subjectName'], '_sn_anchor' => 'sn-kind-' . $b['kind']);
+        $base = array('site_id' => $b['site_id'], 'kind' => $b['kind'], 'subject' => $b['subject'], 'sig' => $b['sig'], 'name' => $b['subjectName'], 'ver' => (string) ($b['ver'] ?? ''), '_sn_anchor' => 'sn-kind-' . $b['kind']);
         echo '<div class="sn-item-actions">';
         if (in_array($b['kind'], self::recheck_kinds(), true)) {
             $days = (int) (Integra_Sentinel_Settings::get('policies')['recheck_days'] ?? 60);
@@ -521,7 +521,7 @@ final class Integra_Sentinel_Admin {
                     $until = '9999-12-31';
                     $reason = $cmd === 'mark_tested' ? 'Provato: funziona' : 'In attesa di aggiornamento';
                 }
-                $ok = Integra_Sentinel_Settings::waiver_add($site_id, $kind, $subject, $reason, $until, $fleet_wide, $types[$cmd], (string) self::post('sig'), (string) self::post('name'));
+                $ok = Integra_Sentinel_Settings::waiver_add($site_id, $kind, $subject, $reason, $until, $fleet_wide, $types[$cmd], (string) self::post('sig'), (string) self::post('name'), sanitize_text_field(self::post('ver')));
                 if ($ok) { Integra_Sentinel_Store::log($types[$cmd], $kind . ' · ' . $subject . ($reason !== '' ? ' · ' . $reason : ''), $fleet_wide ? '' : $site_id); }
                 self::back($ok ? $types[$cmd] : 'invalid');
             case 'waiver_remove':
