@@ -34,12 +34,14 @@ final class Integra_Sentinel_Themes {
     }
 
     /**
-     * @param array $ctx catalog (slug => version/url/source), theme_hashes (slug|version => hash => count),
+     * @param array $ctx catalog (slug => version/url/source), fleet (versioni dei temi nel parco), verified, theme_hashes (slug|version => hash => count),
      *                   vulns (slug => count/tier), owners (slug => agenzia|cliente), wp, php
      */
     public static function analyze($report, $ctx = array()) {
         $report = is_array($report) ? $report : array();
         $catalog = (array) ($ctx['catalog'] ?? array());
+        $fleet = (array) ($ctx['fleet'] ?? array());
+        $verified = (array) ($ctx['verified'] ?? array());
         $hashes = (array) ($ctx['theme_hashes'] ?? array());
         $vulns = (array) ($ctx['vulns'] ?? array());
         $owners = (array) ($ctx['owners'] ?? array());
@@ -83,11 +85,21 @@ final class Integra_Sentinel_Themes {
                 if ($type === 'unknown' && $origin === 'custom') { $origin = 'unknown'; $label = 'Canale non ancora verificato da WordPress'; }
             } elseif ($envato || $elegant) { $origin = 'nochannel'; $premium = true; $label = 'Probabile tema commerciale (Client < 1.7)'; }
 
-            $latest = ''; $latest_src = ''; $latest_url = '';
+            $latest = ''; $latest_src = ''; $latest_url = ''; $latest_note = ''; $verified_note = '';
             if (!empty($catalog[$slug]['version']) && Integra_Sentinel_Dependencies::valid_version((string) $catalog[$slug]['version'])) {
                 $latest = (string) $catalog[$slug]['version'];
                 $latest_src = (string) ($catalog[$slug]['source'] ?? 'catalogo Integra');
                 $latest_url = (string) ($catalog[$slug]['url'] ?? '');
+            }
+            $known = $latest !== '';
+            if ($type !== 'wporg') {
+                // Incrocio con gli altri siti: una versione piu' recente altrove vuol dire che un aggiornamento c'e'.
+                $ref = Integra_Sentinel_Dependencies::fleet_reference($slug, (string) ($t['name'] ?? $slug), (string) ($t['version'] ?? ''), $fleet, $verified);
+                if ($ref['version'] !== '' && ($latest === '' || Integra_Sentinel_Dependencies::newer($ref['version'], $latest))) {
+                    $latest = $ref['version']; $latest_src = $ref['source']; $latest_note = $ref['note'];
+                }
+                $known = $known || $ref['known'];
+                $verified_note = $ref['verified'];
             }
             $behind = $latest !== '' && Integra_Sentinel_Dependencies::valid_version((string) ($t['version'] ?? '')) && version_compare(ltrim($latest, 'v'), ltrim((string) $t['version'], 'v'), '>');
             $in_use = $role !== '';
@@ -114,8 +126,9 @@ final class Integra_Sentinel_Themes {
                 $status = 'license';
                 $reasons[] = $license === 'missing' ? 'Chiave di licenza o API non inserita: il tema non riceve aggiornamenti.' : 'Licenza scaduta o non valida.';
             } elseif ($origin === 'nochannel' && $premium) {
-                if ($behind) { $status = 'manual'; $reasons[] = 'Disponibile ' . $latest . ' (' . $latest_src . '): aggiornamento manuale dal fornitore.'; }
-                elseif ($latest === '') { $status = 'blind'; $reasons[] = 'Nessun canale di aggiornamento e nessuna versione di riferimento nota.'; }
+                if ($behind) { $status = 'manual'; $reasons[] = $latest_note !== '' ? $latest_note . ' Va aggiornato a mano dal fornitore.' : 'Disponibile ' . $latest . ' (' . $latest_src . '): aggiornamento manuale dal fornitore.'; }
+                elseif (!$known) { $status = 'blind'; $reasons[] = 'Nessun canale di aggiornamento e nessuna versione di riferimento nota.'; }
+                elseif ($verified_note !== '') { $reasons[] = $verified_note; }
             }
 
             // Personalizzazioni nel tema: functions.php diverso dagli altri siti con la stessa versione.
@@ -156,7 +169,7 @@ final class Integra_Sentinel_Themes {
             } elseif ($status === 'blind') {
                 $issues[] = self::issue('blind', $slug, $name, $has_vuln ? 'high' : 'low', 'agenzia', 'Tema ' . $name . ': ultima versione sconosciuta',
                     $label . '. Nessun canale e nessuna versione di riferimento nel catalogo o negli acquisti Envato.',
-                    'Verificare la versione sul sito del fornitore e inserirla nel catalogo premium (Impostazioni).', $has_vuln ? 30 : 5, $has_vuln);
+                    'Verificare la versione sul sito del fornitore: se è già l’ultima, segnarlo con «Aggiornato all’ultima versione», altrimenti aggiornare.', $has_vuln ? 30 : 5, $has_vuln);
             }
             if ($customized) {
                 $issues[] = self::issue('modified', 'theme-' . $slug, $name, $no_child ? 'high' : 'medium', 'agenzia', 'Tema ' . $name . ' personalizzato direttamente',

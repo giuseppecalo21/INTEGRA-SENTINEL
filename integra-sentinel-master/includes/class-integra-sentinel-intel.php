@@ -111,7 +111,7 @@ final class Integra_Sentinel_Intel {
         foreach ((array) $sites as $site) {
             foreach ((array) ($site['report']['plugins'] ?? array()) as $p) {
                 $slug = (string) ($p['slug'] ?? '');
-                if ($slug === '' || in_array($slug, array('integra-sentinel-client', 'integra-sentinel-master'), true)) { continue; }
+                if ($slug === '' || Integra_Sentinel_Dependencies::is_own($p)) { continue; }
                 if (in_array((string) ($p['channel']['type'] ?? ''), array('vendor', 'external', 'disabled'), true)) { continue; }
                 $update = (string) ($p['update']['version'] ?? '');
                 if (!isset($targets[$slug]) || ($update !== '' && version_compare($update, $targets[$slug], '>'))) { $targets[$slug] = $update; }

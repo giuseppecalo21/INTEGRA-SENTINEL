@@ -203,7 +203,9 @@ final class Integra_Sentinel_Reports {
                 if ((string) ($b['node'] ?? '') === $subject || (string) $b['subject'] === $subject) { $out[] = $b['title'] . ': ' . $b['detail']; }
             }
             foreach ($a['waived'] as $b) {
-                if ((string) ($b['node'] ?? '') === $subject || (string) $b['subject'] === $subject) { $out[] = 'Scelta concordata: ' . (string) ($b['waiver']['reason'] ?? ''); }
+                if ((string) ($b['node'] ?? '') !== $subject && (string) $b['subject'] !== $subject) { continue; }
+                $type = (string) ($b['waiver']['type'] ?? 'waiver');
+                $out[] = $type === 'verified' ? 'Verificato a mano: già all’ultima versione del fornitore.' : ($type === 'tested' ? 'Provato dopo l’aggiornamento: funziona.' : 'Scelta concordata: ' . (string) ($b['waiver']['reason'] ?? ''));
             }
             return array_values(array_unique($out));
         };
@@ -236,12 +238,6 @@ final class Integra_Sentinel_Reports {
             elseif ($b['owner'] === 'hosting') { $hosting_actions[] = $b['title'] . ' — ' . $b['action']; }
         }
 
-        $tasks = array();
-        foreach (Integra_Sentinel_Store::tasks(array('site_id' => $id, 'status' => 'done', 'limit' => 200)) as $t) {
-            if ((int) $t['closed_at'] < $period['start'] || (int) $t['closed_at'] >= $period['end']) { continue; }
-            $tasks[] = array('intervento' => $t['title'], 'nota' => $t['notes'] !== '' ? $t['notes'] : null);
-        }
-
         $uptime = Integra_Sentinel_Store::uptime($id, $period['start'], $period['end']);
         $incidents = array();
         foreach (self::incidents($id, $period['start'], $period['end']) as $i) { $incidents[] = array('inizio' => wp_date('d/m/Y H:i', $i['from']), 'durata' => self::duration($i['to'] - $i['from'])); }
@@ -254,7 +250,6 @@ final class Integra_Sentinel_Reports {
             'aggiornamenti_applicati' => $done,
             'componenti_aggiunti' => $added,
             'componenti_rimossi' => $removed,
-            'interventi_completati' => $tasks,
             'aggiornamenti_non_ancora_applicati' => $pending,
             'vulnerabilita_note_ancora_presenti' => $vulnerable,
             'note_fisse_sui_componenti' => self::site_component_notes($site),
@@ -501,7 +496,6 @@ final class Integra_Sentinel_Reports {
             . '</tbody></table>';
         $html .= Integra_Sentinel_Checklist::document_html($site, 'Accessi, backup e accordi necessari per aggiornare il sito in sicurezza, con lo stato verificato alla data di questo audit. Le voci da sistemare indicano cosa non è ancora possibile fare.');
         $kinds = Integra_Sentinel_Fleet::kinds();
-        $owners = Integra_Sentinel_Fleet::owners();
         $by_kind = array();
         foreach ($a['bottlenecks'] as $b) { $by_kind[$b['kind']][] = $b; }
         $html .= '<h2>Cosa va sistemato</h2>';
@@ -511,38 +505,12 @@ final class Integra_Sentinel_Reports {
             $html .= '<h3 style="font-size:14px;margin:16px 0 6px">' . self::e($meta['label']) . ' (' . count($by_kind[$kind]) . ')</h3><table><tbody>';
             foreach ($by_kind[$kind] as $b) {
                 $tone = in_array($b['severity'], array('critical', 'high'), true) ? 'bad' : ($b['severity'] === 'medium' ? 'warn' : '');
-                $html .= '<tr><td style="width:62%"><strong>' . self::e($b['title']) . '</strong><br>' . self::e($b['detail']) . '</td><td>' . self::pill(Integra_Sentinel_Fleet::severity_label($b['severity']), $tone) . '<br>' . self::e($owners[$b['owner']] ?? 'Agenzia') . ' · ~' . (int) $b['minutes'] . ' min</td></tr>';
+                $html .= '<tr><td style="width:62%"><strong>' . self::e($b['title']) . '</strong><br>' . self::e($b['detail']) . '</td><td>' . self::pill(Integra_Sentinel_Fleet::severity_label($b['severity']), $tone) . '<br>~' . (int) $b['minutes'] . ' min</td></tr>';
             }
             $html .= '</tbody></table>';
         }
         $html .= '<div class="note">La stima comprende ' . (int) $a['summary']['ready'] . ' aggiornamenti applicabili subito e gli interventi elencati, secondo i tempi medi configurati dall’agenzia. Licenze da acquistare e lavori dell’hosting sono esclusi dalla stima.</div>';
         return self::shell('Audit di presa in carico', $site['label'], $html);
-    }
-
-    /**
-     * Testi pronti da inviare: al cliente (licenze, decisioni) e all'hosting (PHP, permessi, spazio).
-     * @return array client, hosting, subject
-     */
-    public static function requests($site) {
-        $a = Integra_Sentinel_Analysis::site($site);
-        $b = Integra_Sentinel_Settings::get('branding');
-        $meta = (array) ($site['meta'] ?? array());
-        $client = array(); $hosting = array();
-        foreach ($a ? $a['bottlenecks'] : array() as $item) {
-            if ($item['owner'] === 'cliente') {
-                $cost = '';
-                foreach (Integra_Sentinel_Licenses::for_slug((string) $item['subject']) as $lic) { if (!empty($lic['cost'])) { $cost = ' (circa ' . number_format_i18n((float) $lic['cost'], 2) . ' €/anno)'; break; } }
-                $client[] = '- ' . $item['title'] . $cost . ': ' . $item['action'];
-            } elseif ($item['owner'] === 'hosting') {
-                $hosting[] = '- ' . $item['title'] . '. ' . $item['detail'];
-            }
-        }
-        $greeting = !empty($meta['contact_name']) ? 'Gentile ' . $meta['contact_name'] . ',' : 'Buongiorno,';
-        $client_text = $client ? $greeting . "\n\nper mantenere aggiornato e sicuro il sito " . $site['url'] . " servono alcune azioni da parte vostra:\n\n" . implode("\n", $client)
-            . "\n\nSenza questi passaggi gli aggiornamenti dei componenti indicati restano bloccati. Restiamo a disposizione per qualsiasi chiarimento.\n\n" . $b['name'] : '';
-        $hosting_text = $hosting ? "Buongiorno,\n\nper il sito " . $site['url'] . " chiediamo il vostro intervento su:\n\n" . implode("\n", $hosting)
-            . "\n\nGrazie,\n" . $b['name'] : '';
-        return array('client' => $client_text, 'hosting' => $hosting_text, 'subject' => 'Aggiornamenti del sito ' . wp_parse_url((string) $site['url'], PHP_URL_HOST) . ': azioni necessarie');
     }
 
     public static function send_monthly($site, $ym, $to) {

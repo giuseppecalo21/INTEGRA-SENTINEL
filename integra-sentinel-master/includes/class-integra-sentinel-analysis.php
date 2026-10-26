@@ -52,6 +52,8 @@ final class Integra_Sentinel_Analysis {
         return self::$ctx = array(
             'sites' => $sites,
             'fleet' => Integra_Sentinel_Dependencies::fleet_versions($sites),
+            'fleet_themes' => Integra_Sentinel_Dependencies::fleet_versions($sites, 'themes'),
+            'verified' => self::verified_versions($sites),
             'catalog' => $catalog,
             'manual' => (array) $deps['rules'],
             'wporg' => Integra_Sentinel_Intel::wporg_info(),
@@ -91,16 +93,12 @@ final class Integra_Sentinel_Analysis {
         $plugins = array();
         foreach ((array) ($report['plugins'] ?? array()) as $p) { if (!empty($p['slug'])) { $plugins[$p['slug']] = $p; } }
         $owners = array();
-        foreach (array_merge(array_keys($plugins), array_column((array) ($report['themes'] ?? array()), 'slug')) as $slug) {
-            $owner = Integra_Sentinel_Licenses::owner_for((string) $slug, $id);
-            if ($owner !== '') { $owners[$slug] = $owner; }
-        }
         $policies = $ctx['policies'];
         $env = (array) ($report['env'] ?? array());
 
-        $themes = Integra_Sentinel_Themes::analyze($report, array('catalog' => $ctx['catalog'], 'theme_hashes' => $ctx['theme_hashes'], 'vulns' => $theme_vulns, 'owners' => $owners));
+        $themes = Integra_Sentinel_Themes::analyze($report, array('catalog' => $ctx['catalog'], 'fleet' => $ctx['fleet_themes'], 'verified' => $ctx['verified'], 'theme_hashes' => $ctx['theme_hashes'], 'vulns' => $theme_vulns, 'owners' => $owners));
         $graph = Integra_Sentinel_Dependencies::analyze($report, array(
-            'fleet' => $ctx['fleet'], 'catalog' => $ctx['catalog'], 'manual' => $ctx['manual'], 'vulns' => $vulns,
+            'fleet' => $ctx['fleet'], 'verified' => $ctx['verified'], 'catalog' => $ctx['catalog'], 'manual' => $ctx['manual'], 'vulns' => $vulns,
             'wporg' => $ctx['wporg'], 'integrity' => self::plugin_integrity($report, $ctx), 'owners' => $owners, 'bad' => $ctx['bad'],
             'quarantine' => array('days' => (int) ($policies['quarantine_days'] ?? 5), 'scope' => (string) ($policies['quarantine_scope'] ?? 'hubs')),
             'abandoned_years' => (int) ($policies['abandoned_years'] ?? 2),
@@ -115,12 +113,23 @@ final class Integra_Sentinel_Analysis {
 
         $issues = array_merge($graph['bottlenecks'], $themes['issues'], $environment['issues'], $core['issues'], self::stack_issues($report, $ctx), self::core_branch_issues($report, $ctx));
         $active = array(); $waived = array(); $minutes = 0;
+        $nodes = array();
+        foreach ($graph['nodes'] as $n) { $nodes[$n['id']] = $n; }
+        $today = wp_date('Y-m-d');
         foreach ($issues as $b) {
             $b += array('node' => '', 'subject' => (string) $b['id'], 'subjectName' => (string) $b['title'], 'owner' => 'agenzia', 'security' => false, 'unlocks' => array(), 'score' => 0);
             $b['subject'] = (string) $b['subject'];
             $b['minutes'] = self::minutes_for($b, $ctx['estimates']);
-            $waiver = Integra_Sentinel_Settings::waiver_for($id, (string) $b['kind'], $b['subject']);
-            if ($waiver) { $b['waiver'] = $waiver; $waived[] = $b; continue; }
+            $b['sig'] = self::signature($b, $nodes);
+            $b['ver'] = self::installed_version($b, $nodes, $themes);
+            $mark = Integra_Sentinel_Settings::mark_for($id, (string) $b['kind'], $b['subject']);
+            if ($mark) {
+                $live = (string) ($mark['until'] ?? '') >= $today;
+                // "Provato" e "in attesa" valgono per le versioni di quel momento: se cambiano, si riprova.
+                if (in_array($mark['type'], array('tested', 'waiting'), true) && $mark['sig'] !== $b['sig']) { $live = false; }
+                if ($live && $mark['type'] !== 'waiting') { $b['waiver'] = $mark; $waived[] = $b; continue; }
+                if ($live || in_array($mark['type'], array('verified', 'tested'), true)) { $b['mark'] = $mark + array('live' => $live); }
+            }
             $active[] = $b;
             $minutes += $b['minutes'];
         }
@@ -159,6 +168,41 @@ final class Integra_Sentinel_Analysis {
         );
         return self::$memo[$key] = array('graph' => $graph, 'themes' => $themes, 'environment' => $environment, 'core' => $core,
             'bottlenecks' => $active, 'waived' => $waived, 'summary' => $summary);
+    }
+
+    /**
+     * Versioni segnate a mano come "ultima versione" e ancora valide, per slug e nome: valgono da riferimento
+     * anche per gli altri siti con lo stesso componente.
+     */
+    private static function verified_versions($sites) {
+        $today = wp_date('Y-m-d');
+        $out = array();
+        foreach (Integra_Sentinel_Settings::waivers() as $w) {
+            if (($w['type'] ?? '') !== 'verified' || (string) ($w['until'] ?? '') < $today || !Integra_Sentinel_Dependencies::valid_version((string) ($w['ver'] ?? ''))) { continue; }
+            $key = (string) $w['subject'] . '|' . Integra_Sentinel_Dependencies::normalize_name((string) ($w['name'] ?? ''));
+            if (isset($out[$key]) && !Integra_Sentinel_Dependencies::newer((string) $w['ver'], $out[$key]['version'])) { continue; }
+            $site = ($w['site_id'] ?? '') === '*' ? 'un sito del parco' : (string) ($sites[$w['site_id']]['label'] ?? 'un sito del parco');
+            $out[$key] = array('version' => (string) $w['ver'], 'site' => $site, 'date' => wp_date('d/m/Y', (int) ($w['at'] ?? time())));
+        }
+        return $out;
+    }
+
+    /** Versione installata del componente di un problema (plugin dalla mappa, tema dall'analisi dei temi). */
+    private static function installed_version($b, $nodes, $themes) {
+        if (isset($nodes[$b['node']])) { return (string) $nodes[$b['node']]['ver']; }
+        if (strpos((string) ($b['id'] ?? ''), 'theme:') === 0) {
+            foreach ($themes['themes'] as $t) { if ($t['slug'] === $b['subject']) { return (string) $t['version']; } }
+        }
+        return '';
+    }
+
+    /** Impronta delle versioni coinvolte in un problema: componente, versione installata e versioni in arrivo dei plugin collegati. */
+    private static function signature($b, $nodes) {
+        $parts = array((string) $b['kind'], (string) $b['subject'], (string) $b['title']);
+        foreach (array_merge(array((string) $b['node']), (array) $b['unlocks']) as $nid) {
+            if (isset($nodes[$nid])) { $parts[] = $nid . '@' . $nodes[$nid]['ver'] . '>' . $nodes[$nid]['new']; }
+        }
+        return substr(md5(implode('|', $parts)), 0, 12);
     }
 
     public static function compare($a, $b) {
@@ -281,7 +325,7 @@ final class Integra_Sentinel_Analysis {
         $active = array(); $inactive = array();
         foreach ((array) ($report['plugins'] ?? array()) as $p) {
             $slug = (string) ($p['slug'] ?? '');
-            if ($slug === '' || in_array($slug, array('integra-sentinel-client', 'integra-sentinel-master'), true)) { continue; }
+            if ($slug === '' || Integra_Sentinel_Dependencies::is_own($p)) { continue; }
             if (!empty($p['active'])) { $active[$slug] = $p; } else { $inactive[$slug] = (string) ($p['name'] ?? $slug); }
         }
         $cats = self::categories(); $by_cat = array();
